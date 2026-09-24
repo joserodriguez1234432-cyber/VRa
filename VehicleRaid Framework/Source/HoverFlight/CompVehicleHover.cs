@@ -91,6 +91,61 @@ namespace VehicleRaid
             }
         }
 
+        public bool HasPilot()
+        {
+            if (Vehicle == null) return false;
+
+            if (VehicleMod.settings?.debug?.debugDraftAnyVehicle == true ||
+                (Vehicle.MovementPermissions & VehiclePermissions.Autonomous) != VehiclePermissions.None)
+            {
+                return true;
+            }
+
+            // For gravships (VehiclePawnWithMap from Vehicle Map Framework)
+            // VMF converts the pilot console into a vehicle seat with role 'pilot' and HandlingType.Movement
+            if (CrewManager.IsGravshipVehicle(Vehicle))
+            {
+                if (!Vehicle.HasEnoughOperators)
+                {
+                    return false;
+                }
+
+                if (Vehicle.handlers != null)
+                {
+                    bool hasActivePilot = false;
+                    foreach (var handler in Vehicle.handlers)
+                    {
+                        if (handler?.role == null) continue;
+                        if ((handler.role.HandlingTypes & HandlingType.Movement) != 0 || handler.role.key == "pilot")
+                        {
+                            if (handler.RoleFulfilled)
+                            {
+                                foreach (var thing in handler.thingOwner)
+                                {
+                                    if (thing is Pawn p && !p.Dead && !p.Downed)
+                                    {
+                                        hasActivePilot = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (hasActivePilot) break;
+                    }
+                    if (!hasActivePilot) return false;
+                }
+                else
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
+            if (!Vehicle.HasEnoughOperators) return false;
+            return CrewManager.HasOperationalDriver(Vehicle);
+        }
+
         public override void PostExposeData()
         {
             base.PostExposeData();
@@ -217,7 +272,7 @@ namespace VehicleRaid
                 
                 if (!Vehicle.Drafted)
                     takeoffCommand.Disable("VRF_HoverEngineOff".Translate());
-                else if (!Vehicle.HasEnoughOperators || Vehicle.PawnCountToOperateLeft > 0)
+                else if (!HasPilot() || Vehicle.PawnCountToOperateLeft > 0)
                     takeoffCommand.Disable("VF_NotEnoughToOperate".Translate());
                 else if (Ext_Vehicles.IsRoofed(Vehicle.Position, Vehicle.Map))
                     takeoffCommand.Disable("CommandLaunchGroupFailUnderRoof".Translate());
@@ -264,13 +319,13 @@ namespace VehicleRaid
                 }
                 else
                 {
-                    faceTargetCommand.Disabled = !Vehicle.HasEnoughOperators;
-                    if (!Vehicle.HasEnoughOperators)
+                    faceTargetCommand.Disabled = !HasPilot();
+                    if (!HasPilot())
                         faceTargetCommand.disabledReason = "VRF_HoverNeedsPilot".Translate();
                     yield return faceTargetCommand;
 
-                    attackTargetCommand.Disabled = !Vehicle.HasEnoughOperators;
-                    if (!Vehicle.HasEnoughOperators)
+                    attackTargetCommand.Disabled = !HasPilot();
+                    if (!HasPilot())
                         attackTargetCommand.disabledReason = "VRF_HoverNeedsPilot".Translate();
                     yield return attackTargetCommand;
                 }
@@ -339,6 +394,8 @@ namespace VehicleRaid
             attackTarget = LocalTargetInfo.Invalid;
             isFacingTarget = false;
             facingTarget = LocalTargetInfo.Invalid;
+            isFacingTargetNPC = false;
+            facingTargetNPC = null;
             hasLandingApproach = false;
         }
 
@@ -731,6 +788,18 @@ namespace VehicleRaid
             }
             else if (State == HoverState.Hovering)
             {
+                if (!HasPilot())
+                {
+                    if (isFacingTarget || isAttackingTarget || isFacingTargetNPC)
+                    {
+                        CancelTarget();
+                        isFacingTargetNPC = false;
+                        facingTargetNPC = null;
+                    }
+                    hasTarget = false;
+                    moveSpeed = 0f;
+                }
+
                 if (FlightType == FlightType.Hover)
                 {
                     bobbingOffset = Props.hoverBobAmount * Mathf.Sin(Find.TickManager.TicksGame * Props.hoverBobSpeed * Mathf.PI / 60f);
@@ -832,6 +901,17 @@ namespace VehicleRaid
 
         private void TickFacingTarget()
         {
+            if (!HasPilot())
+            {
+                if (isFacingTarget || isAttackingTarget || isFacingTargetNPC)
+                {
+                    CancelTarget();
+                    isFacingTargetNPC = false;
+                    facingTargetNPC = null;
+                }
+                return;
+            }
+
             if (isFacingTargetNPC)
             {
                 if (facingTargetNPC == null || facingTargetNPC.Destroyed || !facingTargetNPC.Spawned)
@@ -888,6 +968,13 @@ namespace VehicleRaid
 
         private void TickHoverMovement()
         {
+            if (!HasPilot())
+            {
+                hasTarget = false;
+                moveSpeed = 0f;
+                return;
+            }
+
             float speed = Props.hoverMoveSpeed / 60f;
             moveSpeed = speed;
 

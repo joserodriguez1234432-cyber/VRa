@@ -250,7 +250,7 @@ namespace VehicleRaid
                 var hoverComp = vehicle.GetComp<CompVehicleHover>();
                 if (hoverComp == null || hoverComp.State != HoverState.Hovering) continue;
                 if (vehicle.Faction != Faction.OfPlayer) continue;
-                if (!vehicle.HasEnoughOperators) continue;
+                if (!hoverComp.HasPilot()) continue;
 
                 hoverComp.SetTarget(mousePos);
                 FleckMaker.Static(cell, map, FleckDefOf.FeedbackGoto);
@@ -393,7 +393,7 @@ namespace VehicleRaid
             var hoverComp = __instance.GetComp<CompVehicleHover>();
             if (hoverComp == null) return;
             if (hoverComp.State == HoverState.Hovering)
-                __result = true;
+                __result = hoverComp.HasPilot();
         }
     }
 
