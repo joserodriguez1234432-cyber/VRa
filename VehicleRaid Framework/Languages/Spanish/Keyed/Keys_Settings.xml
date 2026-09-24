@@ -156,4 +156,11 @@
   <VRF_Settings_IsSiegeDropDesc>Marca este vehículo como pod de asedio (como el Goliath). NO se le inyectará modo hover/helicóptero y podrá aparecer en raids con llegada en paracaídas. El Auto-asignar activa esto automáticamente en los pods de asedio detectados.</VRF_Settings_IsSiegeDropDesc>
 
   <VRF_Strategy_DropPod>Raids de Drop Pod / Paracaídas (CenterDrop, EdgeDrop, etc.)</VRF_Strategy_DropPod>
+  <VRF_Settings_GravshipType>Gravinave (hover)</VRF_Settings_GravshipType>
+  <VRF_Settings_GravshipSpeedInfo>Velocidad calculada según los propulsores instalados</VRF_Settings_GravshipSpeedInfo>
+  <VRF_Settings_ThrusterConfigBtn>Configurar propulsores de gravinave...</VRF_Settings_ThrusterConfigBtn>
+  <VRF_Settings_ThrusterConfigTitle>Configuración de Propulsores de Gravinave</VRF_Settings_ThrusterConfigTitle>
+  <VRF_Settings_ThrusterConfigDesc>Ajusta la velocidad que aporta cada propulsor al vuelo hover. La velocidad total de la gravinave será la suma de todos sus propulsores activos.</VRF_Settings_ThrusterConfigDesc>
+  <VRF_Settings_ThrusterRange>Alcance: {0} casillas</VRF_Settings_ThrusterRange>
+  <VRF_Settings_ThrusterReset>Restablecer valores</VRF_Settings_ThrusterReset>
 </LanguageData>

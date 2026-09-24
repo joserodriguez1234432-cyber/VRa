@@ -300,6 +300,8 @@ namespace VehicleRaidFramework
 
     public class VRF_ModSettings : ModSettings
     {
+        public Dictionary<string, float> thrusterSpeedSettings = new Dictionary<string, float>();
+
         public List<VRF_NaturalRaidFactionConfig> factionConfigs = new List<VRF_NaturalRaidFactionConfig>();
         public bool autoLoadPresets = true;
         public List<VRF_HoverConfig> hoverConfigs = new List<VRF_HoverConfig>();

@@ -1358,7 +1358,9 @@ namespace VehicleRaidFramework
             string currentTypeLabel = entry.helicopterMode
                 ? (entry.airVehicleType == "Airplane"
                     ? "VRF_Settings_AirplaneType".Translate().ToString()
-                    : "VRF_Settings_HelicopterType".Translate().ToString())
+                    : (entry.airVehicleType == "Gravship"
+                        ? "VRF_Settings_GravshipType".Translate().ToString()
+                        : "VRF_Settings_HelicopterType".Translate().ToString()))
                 : "VRF_Settings_FlightModeDisabled".Translate().ToString();
 
             if (Widgets.ButtonText(new Rect(rect.x, y, Mathf.Min(rect.width, 220f), 24f), currentTypeLabel))
@@ -1386,21 +1388,47 @@ namespace VehicleRaidFramework
                         _hmsBuffers.Remove(bufKey);
                         VRF_Mod.Instance.WriteSettings();
                     }),
+                    new FloatMenuOption("VRF_Settings_GravshipType".Translate(), () =>
+                    {
+                        entry.helicopterMode  = true;
+                        entry.airVehicleType  = "Gravship";
+                        _hmsBuffers.Remove(bufKey);
+                        VRF_Mod.Instance.WriteSettings();
+                    }),
                 }));
             }
             y += 28f;
 
             if (entry.helicopterMode)
             {
-                string speedLabel = entry.airVehicleType == "Airplane"
-                    ? "VRF_Settings_AirplaneMoveSpeed".Translate().ToString()
-                    : "VRF_Settings_HoverMoveSpeed".Translate().ToString();
-                Widgets.Label(new Rect(rect.x, y, rect.width, 22f), speedLabel); y += 22f;
-                if (!_hmsBuffers.TryGetValue(bufKey, out string hmsBuf) || hmsBuf == null) { hmsBuf = entry.helicopterMoveSpeed.ToString("F1"); _hmsBuffers[bufKey] = hmsBuf; }
-                float prev = entry.helicopterMoveSpeed;
-                Widgets.TextFieldNumeric(new Rect(rect.x, y, Mathf.Min(rect.width, 120f), 24f), ref entry.helicopterMoveSpeed, ref hmsBuf, 0.1f, 99f);
-                _hmsBuffers[bufKey] = hmsBuf;
-                if (Mathf.Abs(entry.helicopterMoveSpeed - prev) > 0.001f) VRF_Mod.Instance.WriteSettings();
+                if (entry.airVehicleType == "Gravship")
+                {
+                    Rect btnRect = new Rect(rect.x, y, Mathf.Min(rect.width, 260f), 26f);
+                    if (Widgets.ButtonText(btnRect, "VRF_ThrusterConfig_OpenButton".Translate()))
+                    {
+                        Find.WindowStack.Add(new VehicleMapFramework.Dialog_VRF_ThrusterConfig());
+                    }
+                    y += 30f;
+
+                    if (!string.IsNullOrEmpty(entry.gravshipPresetName))
+                    {
+                        float calcSpeed = VehicleMapFramework.VRF_GravshipSpeedUtility.CalculatePresetSpeed(entry.gravshipPresetName);
+                        Widgets.Label(new Rect(rect.x, y, rect.width, 22f), $"Velocidad estimada: {calcSpeed:F2} c/s");
+                        y += 24f;
+                    }
+                }
+                else
+                {
+                    string speedLabel = entry.airVehicleType == "Airplane"
+                        ? "VRF_Settings_AirplaneMoveSpeed".Translate().ToString()
+                        : "VRF_Settings_HoverMoveSpeed".Translate().ToString();
+                    Widgets.Label(new Rect(rect.x, y, rect.width, 22f), speedLabel); y += 22f;
+                    if (!_hmsBuffers.TryGetValue(bufKey, out string hmsBuf) || hmsBuf == null) { hmsBuf = entry.helicopterMoveSpeed.ToString("F1"); _hmsBuffers[bufKey] = hmsBuf; }
+                    float prev = entry.helicopterMoveSpeed;
+                    Widgets.TextFieldNumeric(new Rect(rect.x, y, Mathf.Min(rect.width, 120f), 24f), ref entry.helicopterMoveSpeed, ref hmsBuf, 0.1f, 99f);
+                    _hmsBuffers[bufKey] = hmsBuf;
+                    if (Mathf.Abs(entry.helicopterMoveSpeed - prev) > 0.001f) VRF_Mod.Instance.WriteSettings();
+                }
             }
 
             y += 8f;
@@ -1715,6 +1743,18 @@ namespace VehicleRaidFramework
             if (Widgets.ButtonText(new Rect(rect.x, y, 260f, 28f), btnLabel))
                 Find.WindowStack.Add(new Dialog_VRF_GlobalRaidStrategies());
             y += 36f;
+
+            // Configuración de Propulsores de Gravship
+            y += 8f;
+            GUI.color = new Color(0.7f, 0.9f, 1f);
+            Widgets.Label(new Rect(rect.x, y, rect.width, 22f), "VRF_ThrusterConfig_Title".Translate());
+            GUI.color = Color.white;
+            y += 24f;
+            if (Widgets.ButtonText(new Rect(rect.x, y, 280f, 28f), "VRF_ThrusterConfig_OpenButton".Translate()))
+            {
+                Find.WindowStack.Add(new VehicleMapFramework.Dialog_VRF_ThrusterConfig());
+            }
+            y += 34f;
 
             Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
             y += 14f;

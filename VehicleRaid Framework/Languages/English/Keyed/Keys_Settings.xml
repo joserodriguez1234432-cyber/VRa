@@ -156,4 +156,11 @@
   <VRF_Settings_IsSiegeDropDesc>Mark this as a siege-drop pod (like the Goliath). It will NOT have hover/helicopter mode injected and will be allowed to spawn during drop-arrival raids. Auto-fill enables this automatically for detected siege pods.</VRF_Settings_IsSiegeDropDesc>
 
   <VRF_Strategy_DropPod>Drop Pod Raids (CenterDrop, EdgeDrop, etc.)</VRF_Strategy_DropPod>
+  <VRF_Settings_GravshipType>Gravship (hover)</VRF_Settings_GravshipType>
+  <VRF_Settings_GravshipSpeedInfo>Speed calculated from installed thrusters</VRF_Settings_GravshipSpeedInfo>
+  <VRF_Settings_ThrusterConfigBtn>Configure Gravship Thrusters...</VRF_Settings_ThrusterConfigBtn>
+  <VRF_Settings_ThrusterConfigTitle>Gravship Thrusters Configuration</VRF_Settings_ThrusterConfigTitle>
+  <VRF_Settings_ThrusterConfigDesc>Adjust the hover speed contributed by each thruster. The total gravship speed is the sum of all active thrusters.</VRF_Settings_ThrusterConfigDesc>
+  <VRF_Settings_ThrusterRange>Range: {0} tiles</VRF_Settings_ThrusterRange>
+  <VRF_Settings_ThrusterReset>Reset to defaults</VRF_Settings_ThrusterReset>
 </LanguageData>

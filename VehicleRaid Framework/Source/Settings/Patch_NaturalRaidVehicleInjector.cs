@@ -257,6 +257,7 @@ namespace VehicleRaidFramework
                     if (spawnEntry.helicopterMode && spawnVDef.type == VehicleType.Air && !spawnEntry.isSiegeDrop)
                     {
                         bool isAirplane = spawnEntry.airVehicleType == "Airplane";
+                                    bool isGravship = spawnEntry.airVehicleType == "Gravship";
 
                         bool alreadyHasHover = spawnVDef.comps.Any(c => c is CompProperties_VehicleHover);
                         if (alreadyHasHover)
@@ -282,7 +283,7 @@ namespace VehicleRaidFramework
                                         maxTicksPropeller     = refProps.maxTicksPropeller,
                                         hoverAltitude         = refProps.hoverAltitude,
                                         hoverShadowOffset     = refProps.hoverShadowOffset,
-                                        hoverMoveSpeed        = spawnEntry.helicopterMoveSpeed,
+                                        hoverMoveSpeed        = isAirplane ? spawnEntry.helicopterMoveSpeed : (isGravship ? VehicleMapFramework.VRF_GravshipSpeedUtility.CalculatePresetSpeed(spawnEntry.gravshipPresetName) : spawnEntry.helicopterMoveSpeed),
                                         hoverRotationSpeed    = refProps.hoverRotationSpeed,
                                         shadowAlphaPropellerCurve = refProps.shadowAlphaPropellerCurve,
                                         xPositionCurve        = refProps.xPositionCurve,
@@ -302,7 +303,7 @@ namespace VehicleRaidFramework
                                         maxTicksPropeller     = 300,
                                         hoverAltitude         = 0.5f,
                                         hoverShadowOffset     = 1.5f,
-                                        hoverMoveSpeed        = spawnEntry.helicopterMoveSpeed,
+                                        hoverMoveSpeed        = isAirplane ? spawnEntry.helicopterMoveSpeed : (isGravship ? VehicleMapFramework.VRF_GravshipSpeedUtility.CalculatePresetSpeed(spawnEntry.gravshipPresetName) : spawnEntry.helicopterMoveSpeed),
                                         hoverRotationSpeed    = 60f,
                                         runwayClearCells      = 30,
                                         landingMaxTicks       = 600,
@@ -360,7 +361,7 @@ namespace VehicleRaidFramework
                                 VehicleMod.settings.vehicles.vehicleStats[spawnVDef.defName] =
                                     new Dictionary<string, float>();
                             VehicleMod.settings.vehicles.vehicleStats[spawnVDef.defName]
-                                [VehicleStatDefOf.MoveSpeed.defName] = isAirplane ? spawnEntry.helicopterMoveSpeed : 4.5f;
+                                [VehicleStatDefOf.MoveSpeed.defName] = isAirplane ? spawnEntry.helicopterMoveSpeed : (isGravship ? VehicleMapFramework.VRF_GravshipSpeedUtility.CalculatePresetSpeed(spawnEntry.gravshipPresetName) : 4.5f);
                         }
                     }
 

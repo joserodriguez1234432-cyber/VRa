@@ -13,7 +13,8 @@ namespace VehicleRaid
     public enum FlightType
     {
         Hover,
-        Airplane
+        Airplane,
+        Gravship
     }
 
     public enum HoverState
@@ -69,6 +70,20 @@ namespace VehicleRaid
         private Rot4 pendingLandingRot = Rot4.North;
 
         public CompProperties_VehicleHover Props => (CompProperties_VehicleHover)props;
+
+        public float EffectiveHoverMoveSpeed
+        {
+            get
+            {
+                if (Vehicle != null && (VehicleRaidFramework.CrewManager.IsGravshipVehicle(Vehicle) || Props.flightType == FlightType.Gravship))
+                {
+                    float gSpeed = VehicleRaidFramework.VehicleMapFramework.VRF_GravshipSpeedUtility.CalculateGravshipSpeed(Vehicle);
+                    if (gSpeed > 0f) return gSpeed;
+                }
+                return Props.hoverMoveSpeed;
+            }
+        }
+
 
         public bool IsAirborne => State == HoverState.Hovering || State == HoverState.TakingOff || State == HoverState.Landing || State == HoverState.Crashing;
 
@@ -800,7 +815,7 @@ namespace VehicleRaid
                     moveSpeed = 0f;
                 }
 
-                if (FlightType == FlightType.Hover)
+                if (FlightType == FlightType.Hover || FlightType == FlightType.Gravship)
                 {
                     bobbingOffset = Props.hoverBobAmount * Mathf.Sin(Find.TickManager.TicksGame * Props.hoverBobSpeed * Mathf.PI / 60f);
                     currentAltitude = bobbingOffset;
@@ -821,7 +836,7 @@ namespace VehicleRaid
                 float t = Mathf.Clamp01((float)ticksInState / CrashDurationTicks);
                 Vehicle.Angle = Mathf.Lerp(0f, 45f, t);
 
-                float speed = Props.hoverMoveSpeed * 0.4f / 60f;
+                float speed = EffectiveHoverMoveSpeed * 0.4f / 60f;
                 float rad = currentFlyAngle * Mathf.Deg2Rad;
                 realPos += new Vector2(Mathf.Sin(rad), Mathf.Cos(rad)) * speed * (1f - t * 0.5f);
                 ClampRealPosToMap();
@@ -975,7 +990,7 @@ namespace VehicleRaid
                 return;
             }
 
-            float speed = Props.hoverMoveSpeed / 60f;
+            float speed = EffectiveHoverMoveSpeed / 60f;
             moveSpeed = speed;
 
             if (FlightType == FlightType.Airplane)
