@@ -1,0 +1,122 @@
+using Verse;
+using UnityEngine;
+using Vehicles;
+using RimWorld;
+
+namespace VehicleRaid
+{
+    public class HoverVehicleProjectile : Projectile
+    {
+        public VehiclePawn vehicle;
+        private bool cleanDestroy = false;
+        public bool skipStandardDamage = false;
+
+        public override Vector3 ExactPosition
+        {
+            get
+            {
+                if (vehicle != null && vehicle.Spawned)
+                {
+                    Vector3 pos = vehicle.DrawPos;
+                    pos.y = Altitudes.AltitudeFor(AltitudeLayer.Projectile);
+                    return pos;
+                }
+                return base.ExactPosition;
+            }
+        }
+
+        public void CustomTick()
+        {
+            if (vehicle == null || !vehicle.Spawned || vehicle.Map != this.Map)
+            {
+                cleanDestroy = true;
+                this.Destroy(DestroyMode.Vanish);
+                return;
+            }
+
+            var hoverComp = vehicle.GetComp<CompVehicleHover>();
+            if (hoverComp == null || !hoverComp.IsAirborne)
+            {
+                cleanDestroy = true;
+                this.Destroy(DestroyMode.Vanish);
+                return;
+            }
+
+            if (this.Position != vehicle.Position)
+            {
+                this.Position = vehicle.Position;
+            }
+
+            Vector3 targetPos = vehicle.DrawPos;
+            targetPos.y = Altitudes.AltitudeFor(AltitudeLayer.Projectile);
+            this.destination = targetPos;
+            this.origin = targetPos;
+        }
+
+        public override void ExposeData()
+        {
+            base.ExposeData();
+            Scribe_References.Look(ref vehicle, "vehicle");
+            Scribe_Values.Look(ref cleanDestroy, "cleanDestroy", false);
+            Scribe_Values.Look(ref skipStandardDamage, "skipStandardDamage", false);
+        }
+
+        public override void PreApplyDamage(ref DamageInfo dinfo, out bool absorbed)
+        {
+            absorbed = true;
+
+            if (vehicle == null || !vehicle.Spawned) return;
+
+            CellRect rect = vehicle.OccupiedRect();
+            IntVec3 hitCell = rect.RandomCell;
+            vehicle.TakeDamage(dinfo);
+        }
+
+        public override void DrawAt(Vector3 drawLoc, bool flip = false)
+        {
+        }
+
+        public override void Impact(Thing hitThing, bool blockedByShield = false)
+        {
+            if (blockedByShield && vehicle != null && vehicle.Spawned && !skipStandardDamage)
+            {
+                var hoverComp = vehicle.GetComp<CompVehicleHover>();
+                if (hoverComp != null && hoverComp.IsAirborne)
+                {
+                    CellRect rect = vehicle.OccupiedRect();
+                    IntVec3 hitCell = rect.RandomCell;
+                    DamageInfo dinfo = new DamageInfo(DamageDefOf.Bomb, 20f);
+                    vehicle.TakeDamage(dinfo);
+                }
+            }
+
+            cleanDestroy = true;
+            this.Destroy(DestroyMode.Vanish);
+        }
+
+        public void CleanDestroy()
+        {
+            cleanDestroy = true;
+            if (this.Spawned)
+                this.Destroy(DestroyMode.Vanish);
+        }
+
+        public override void Destroy(DestroyMode mode = DestroyMode.Vanish)
+        {
+            if (!cleanDestroy && vehicle != null && vehicle.Spawned && !skipStandardDamage)
+            {
+                Log.Warning($"[VRF] Dummy projectile NON-CLEAN destroy at {this.Position}! Mode={mode}\n{System.Environment.StackTrace}");
+                var hoverComp = vehicle.GetComp<CompVehicleHover>();
+                if (hoverComp != null && hoverComp.IsAirborne && hoverComp.State != HoverState.Crashing)
+                {
+                    CellRect rect = vehicle.OccupiedRect();
+                    IntVec3 hitCell = rect.RandomCell;
+                    DamageInfo dinfo = new DamageInfo(DamageDefOf.Bomb, 30f);
+                    vehicle.TakeDamage(dinfo);
+                }
+            }
+
+            base.Destroy(mode);
+        }
+    }
+}
