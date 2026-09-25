@@ -10,6 +10,7 @@ namespace VehicleRaid
         public VehiclePawn vehicle;
         private bool cleanDestroy = false;
         public bool skipStandardDamage = false;
+        private int lastTickRan = -1;
 
         public override Vector3 ExactPosition
         {
@@ -32,11 +33,24 @@ namespace VehicleRaid
 
         public override void TickInterval(int delta)
         {
-            base.TickInterval(delta);
+            CustomTick();
         }
 
-        private void CustomTick()
+        public override void ImpactSomething()
         {
+            // The dummy projectile stays attached to the vehicle and should never impact
+            // overhead mountain roofs, thin roofs, or fog in vanilla flight checks.
+        }
+
+        public void CustomTick()
+        {
+            int currentTick = Find.TickManager != null ? Find.TickManager.TicksGame : -1;
+            if (currentTick >= 0 && currentTick == lastTickRan)
+            {
+                return;
+            }
+            lastTickRan = currentTick;
+
             if (vehicle == null || !vehicle.Spawned || vehicle.Map != this.Map)
             {
                 cleanDestroy = true;
@@ -115,15 +129,29 @@ namespace VehicleRaid
         {
             if (!cleanDestroy && vehicle != null && vehicle.Spawned && !skipStandardDamage)
             {
-                if (VehicleRaidFramework.VRF_Log.Enabled)
-                    Log.Warning($"[VRF] Dummy projectile NON-CLEAN destroy at {this.Position}! Mode={mode}\n{System.Environment.StackTrace}");
-                var hoverComp = vehicle.GetComp<CompVehicleHover>();
-                if (hoverComp != null && hoverComp.IsAirborne && hoverComp.State != HoverState.Crashing)
+                // Do not damage the vehicle if destroyed due to overhead mountain, roof, fog, or despawn
+                bool isUnderThickRoofOrFog = false;
+                if (this.Map != null && this.Position.InBounds(this.Map))
                 {
-                    CellRect rect = vehicle.OccupiedRect();
-                    IntVec3 hitCell = rect.RandomCell;
-                    DamageInfo dinfo = new DamageInfo(DamageDefOf.Bomb, 30f);
-                    vehicle.TakeDamage(dinfo);
+                    RoofDef roof = this.Map.roofGrid?.RoofAt(this.Position);
+                    if (roof != null && (roof.isThickRoof || HoverRoofUtil.IsBlockingRoof(roof)))
+                        isUnderThickRoofOrFog = true;
+                    if (this.Map.fogGrid != null && this.Map.fogGrid.IsFogged(this.Position))
+                        isUnderThickRoofOrFog = true;
+                }
+
+                if (!isUnderThickRoofOrFog)
+                {
+                    if (VehicleRaidFramework.VRF_Log.Enabled)
+                        Log.Warning($"[VRF] Dummy projectile NON-CLEAN destroy at {this.Position}! Mode={mode}\n{System.Environment.StackTrace}");
+                    var hoverComp = vehicle.GetComp<CompVehicleHover>();
+                    if (hoverComp != null && hoverComp.IsAirborne && hoverComp.State != HoverState.Crashing)
+                    {
+                        CellRect rect = vehicle.OccupiedRect();
+                        IntVec3 hitCell = rect.RandomCell;
+                        DamageInfo dinfo = new DamageInfo(DamageDefOf.Bomb, 30f);
+                        vehicle.TakeDamage(dinfo);
+                    }
                 }
             }
 

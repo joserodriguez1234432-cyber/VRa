@@ -1225,10 +1225,7 @@ namespace VehicleRaid
                 visualOffset = a - 270f;
             }
 
-            // Vehicle Map Framework mirrors west-facing gravships, including their
-            // hull and interior map. Convert the world-space offset to that mirrored
-            // local space so northwest and southwest do not trade places visually.
-// Gravships do not invert visualOffset; hull and interior map use standard rotation.
+            // Gravships y vehiculos normales usan rotacion estandar (visualOffset directo sin invertir).
 
             Rot8 rot8 = (Rot8)cardinal;
             if (Vehicle.FullRotation != rot8)

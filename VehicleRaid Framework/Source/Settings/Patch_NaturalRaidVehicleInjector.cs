@@ -527,7 +527,10 @@ namespace VehicleRaidFramework
                 for (int i = 0; i < vehList.Count; i++)
                 {
                     VehiclePawn vehicle = vehList[i];
-                    IntVec3 spawnCell = cells[i];
+                    IntVec3 rawCell = (cells != null && i < cells.Count) ? cells[i] : vehicle.Position;
+                    IntVec3 spawnCell = (vehicle.VehicleDef.type != VehicleType.Sea && vehicle.GetComp<CompVehicleHover>() == null)
+                        ? FindSafeLandSpawnCell(rawCell, vehicle, map, rot)
+                        : rawCell;
 
                     GenSpawn.Spawn(vehicle, spawnCell, map, rot);
                     vehiclePawns.Add(vehicle);
@@ -628,12 +631,12 @@ namespace VehicleRaidFramework
                     if (!VehicleTrafficManager.CanReachCenter(landGroupBase, map, widest))
                     {
                         if (!VehicleTrafficManager.TryFindGroupEntryPoint(map, landVDefs, out landGroupBase))
-                            landGroupBase = CellFinder.RandomEdgeCell(map);
+                            landGroupBase = CellFinder.TryFindRandomEdgeCellWith(c => c.GetTerrain(map) != null && !c.GetTerrain(map).IsWater && c.Standable(map), map, 0f, out IntVec3 safeEdge) ? safeEdge : CellFinder.RandomEdgeCell(map);
                     }
                 }
                 else if (!VehicleTrafficManager.TryFindGroupEntryPoint(map, landVDefs, out landGroupBase))
                 {
-                    landGroupBase = CellFinder.RandomEdgeCell(map);
+                    landGroupBase = CellFinder.TryFindRandomEdgeCellWith(c => c.GetTerrain(map) != null && !c.GetTerrain(map).IsWater && c.Standable(map), map, 0f, out IntVec3 safeEdge) ? safeEdge : CellFinder.RandomEdgeCell(map);
                 }
 
                 Rot4 groupRot = landGroupBase.OnEdge(map) ? landGroupBase.GetBeginningOfRoadDirection(map) : Rot4.North;
@@ -790,6 +793,41 @@ namespace VehicleRaidFramework
                 if (item.stackCount <= 0) item.Destroy();
             }
         }
+
+        private static bool IsValidCellForVehicle(IntVec3 cell, VehiclePawn vehicle, Map map, Rot4 rot)
+        {
+            if (!cell.InBounds(map) || cell.Fogged(map)) return false;
+
+            CellRect rect = GenAdj.OccupiedRect(cell, rot, vehicle.VehicleDef.Size);
+            foreach (IntVec3 c in rect)
+            {
+                if (!c.InBounds(map) || !c.Standable(map)) return false;
+
+                if (vehicle.VehicleDef.type != VehicleType.Sea && vehicle.GetComp<CompVehicleHover>() == null)
+                {
+                    TerrainDef terr = c.GetTerrain(map);
+                    if (terr != null && (terr.IsWater || terr.IsRiver || terr.passability == Traversability.Impassable))
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        private static IntVec3 FindSafeLandSpawnCell(IntVec3 root, VehiclePawn vehicle, Map map, Rot4 rot)
+        {
+            if (IsValidCellForVehicle(root, vehicle, map, rot)) return root;
+
+            for (int r = 1; r <= 15; r++)
+            {
+                foreach (IntVec3 c in GenRadial.RadialCellsAround(root, r, true))
+                {
+                    if (IsValidCellForVehicle(c, vehicle, map, rot))
+                        return c;
+                }
+            }
+            return root;
+        }
+
     }
 
     public static class DelayedDutyRefresh

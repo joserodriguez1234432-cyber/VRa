@@ -967,7 +967,7 @@ namespace VehicleRaid
                         // rotation renders counter-clockwise. Graphic_Rgb already applies
                         // +rotation internally; subtracting it twice yields the net
                         // -rotation the mirrored mesh needs to turn clockwise with the hull.
-                        __result.quaternion *= Quaternion.Euler(0f, transformData.rotation * -2f, 0f);
+                        __result.quaternion *= Quaternion.Euler(0f, transformData.rotation * 2f, 0f);
                     }
                 }
             }
@@ -992,16 +992,8 @@ namespace VehicleRaid
 
             float angle = vehicle.Transform.rotation;
 
-            // Al apuntar al Oeste con malla WestFlipped (textura reflejada de East),
-            // el eje horizontal local esta invertido, por lo que el angulo debe invertirse
-            // para que el offset de los asientos gire en la misma direccion visual del casco.
-            if ((transformData.orientation.AsInt == 3 || vehicle.Rotation == Rot4.West) &&
-                vehicle.VehicleGraphic != null &&
-                vehicle.VehicleGraphic.WestFlipped &&
-                !vehicle.VehicleGraphic.EastRotated)
-            {
-                angle = -angle;
-            }
+            // Al rotar la nave en modo hover, el offset de los asientos gira en el mismo angulo
+            // visual del casco (alineado tanto para Este como para Oeste).
 
             foreach (Pawn pawn in __instance.thingOwner)
             {
@@ -1273,6 +1265,29 @@ namespace VehicleRaid
             {
                 __result = true;
             }
+        }
+    }
+
+    [HarmonyPatch]
+    public static class Patch_Projectile_Tick_HoverDummy
+    {
+        public static System.Collections.Generic.IEnumerable<System.Reflection.MethodBase> TargetMethods()
+        {
+            yield return HarmonyLib.AccessTools.Method(typeof(Projectile), "Tick");
+            var tickInterval = HarmonyLib.AccessTools.Method(typeof(Projectile), "TickInterval");
+            if (tickInterval != null)
+                yield return tickInterval;
+        }
+
+        [HarmonyPrefix]
+        public static bool Prefix(Projectile __instance)
+        {
+            if (__instance is HoverVehicleProjectile dummy)
+            {
+                dummy.CustomTick();
+                return false;
+            }
+            return true;
         }
     }
 
