@@ -17,9 +17,9 @@ namespace VehicleRaidFramework
         private static JobDef cachedMountJobDef;
         private static DutyDef cachedTransportDutyDef;
 
-        private static JobDef BoardJobDef => cachedBoardJobDef ?? (cachedBoardJobDef = DefDatabase<JobDef>.GetNamedSilentFail(Board));
-        private static JobDef MountJobDef => cachedMountJobDef ?? (cachedMountJobDef = DefDatabase<JobDef>.GetNamedSilentFail(Mount));
-        private static DutyDef TransportDutyDef => cachedTransportDutyDef ?? (cachedTransportDutyDef = VRF_DutyDefOf.VRF_InfantryAssault_Transport ?? DefDatabase<DutyDef>.GetNamedSilentFail(VRF_InfantryAssault_Transport));
+        private static JobDef BoardJobDef => cachedBoardJobDef ?? (cachedBoardJobDef = DefDatabase<JobDef>.GetNamedSilentFail("Board"));
+        private static JobDef MountJobDef => cachedMountJobDef ?? (cachedMountJobDef = DefDatabase<JobDef>.GetNamedSilentFail("Mount"));
+        private static DutyDef TransportDutyDef => cachedTransportDutyDef ?? (cachedTransportDutyDef = VRF_DutyDefOf.VRF_InfantryAssault_Transport ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_InfantryAssault_Transport"));
 
         public static void Postfix(Pawn_JobTracker __instance, ref ThinkResult __result)
         {
@@ -36,11 +36,11 @@ namespace VehicleRaidFramework
 
             DutyDef duty = pawn.mindState?.duty?.def;
             if (duty == null) return;
-            if (duty != TransportDutyDef && (TransportDutyDef == null || duty.defName != VRF_InfantryAssault_Transport)) return;
+            if (duty != TransportDutyDef && (TransportDutyDef == null || duty.defName != "VRF_InfantryAssault_Transport")) return;
 
             if (__result.Job == null) return;
             JobDef curJobDef = __result.Job.def;
-            if (curJobDef == BoardJobDef || curJobDef == MountJobDef || curJobDef.defName == Board || curJobDef.defName == Mount) return;
+            if (curJobDef == BoardJobDef || curJobDef == MountJobDef || curJobDef.defName == "Board" || curJobDef.defName == "Mount") return;
 
             // Fast reboard cooldown check before expensive distance/threat scans
             if (VRF_TransportUtil.IsOnReboardCooldown(pawn)) return;

@@ -87,13 +87,25 @@ namespace VehicleRaidFramework
                     if (lastDisembarkBeganTick.ContainsKey(vehicle.thingIDNumber) && !CrewManager.IsAnyPawnBoarding(vehicle))
                     {
                         bool allSeatsFull = !VRF_TransportUtil.HasAvailablePassengerSlots(vehicle);
-                        bool anyPendingPassenger = !allSeatsFull && vehicle.Map.mapPawns.AllPawnsSpawned.Any(p =>
-                            !(p is VehiclePawn) &&
-                            p.Faction == vehicle.Faction &&
-                            !p.Dead && !p.Downed && p.Spawned &&
-                            !(p.ParentHolder is VehicleRoleHandler) &&
-                            p.GetLord() == vehicle.GetLord() &&
-                            VRF_TransportUtil.GetPassengerHandler(vehicle, p) != null);
+                        bool anyPendingPassenger = false;
+                        if (!allSeatsFull)
+                        {
+                            var allPawns = vehicle.Map.mapPawns.AllPawnsSpawned;
+                            for (int i = 0; i < allPawns.Count; i++)
+                            {
+                                Pawn p = allPawns[i];
+                                if (!(p is VehiclePawn) &&
+                                    p.Faction == vehicle.Faction &&
+                                    !p.Dead && !p.Downed && p.Spawned &&
+                                    !(p.ParentHolder is VehicleRoleHandler) &&
+                                    p.GetLord() == vehicle.GetLord() &&
+                                    VRF_TransportUtil.GetPassengerHandler(vehicle, p) != null)
+                                {
+                                    anyPendingPassenger = true;
+                                    break;
+                                }
+                            }
+                        }
 
                         if (!anyPendingPassenger)
                         {
@@ -151,25 +163,16 @@ namespace VehicleRaidFramework
             IntVec3 bestCell = vehicle.Position;
             float bestDist = bestCell.DistanceToSquared(enemy.Position);
 
-            List<IntVec3> queue = new List<IntVec3>();
+            Queue<IntVec3> queue = new Queue<IntVec3>();
             HashSet<IntVec3> visited = new HashSet<IntVec3>();
 
-            queue.Add(vehicle.Position);
+            queue.Enqueue(vehicle.Position);
             visited.Add(vehicle.Position);
 
             int cellsChecked = 0;
             while (queue.Count > 0)
             {
-                int bestIndex = 0;
-                float minD = float.MaxValue;
-                for (int i = 0; i < queue.Count; i++)
-                {
-                    float d = queue[i].DistanceToSquared(enemy.Position);
-                    if (d < minD) { minD = d; bestIndex = i; }
-                }
-                
-                IntVec3 curr = queue[bestIndex];
-                queue.RemoveAt(bestIndex);
+                IntVec3 curr = queue.Dequeue();
                 cellsChecked++;
 
                 float dist = curr.DistanceToSquared(enemy.Position);
@@ -182,15 +185,14 @@ namespace VehicleRaidFramework
                 if (dist <= 16f) break; 
                 if (cellsChecked > 1200) break;
 
-                foreach (IntVec3 adj in GenAdj.AdjacentCells)
+                for (int i = 0; i < 4; i++)
                 {
-                    IntVec3 next = curr + adj;
-                    if (next.InBounds(map) && !visited.Contains(next) && !unreachableCells.Contains(next) && SeaVehicleSpawnUtility.IsWater(next, map))
+                    IntVec3 next = curr + GenAdj.CardinalDirections[i];
+                    if (next.InBounds(map) && visited.Add(next) && !unreachableCells.Contains(next) && SeaVehicleSpawnUtility.IsWater(next, map))
                     {
-                        visited.Add(next);
                         if (CanVehicleFit(next, vehicle, map))
                         {
-                            queue.Add(next);
+                            queue.Enqueue(next);
                         }
                     }
                 }

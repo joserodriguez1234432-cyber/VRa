@@ -435,9 +435,9 @@ namespace VehicleRaidFramework
             if (targets == null || targets.Count == 0) return null;
             Thing best = null;
             float bestDistSq = float.MaxValue;
-            for (int i = 0; i < targets.Count; i++)
+            foreach (var target in targets)
             {
-                Thing thing = targets[i].Thing;
+                Thing thing = target?.Thing;
                 if (thing == null || thing.Destroyed || thing.Map == null) continue;
                 if (thing.Map.fogGrid.IsFogged(thing.Position)) continue;
                 if (thing is Pawn p && (p.Dead || p.Downed)) continue;

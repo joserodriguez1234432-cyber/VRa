@@ -134,8 +134,10 @@ namespace VehicleRaidFramework
         {
             score = float.MaxValue;
             int waterCellsFound = 0;
-            float closestDistToCenter = float.MaxValue;
             Vector3 centerPos = GetColonyCenter(map);
+            float closestDistSqToCenter = float.MaxValue;
+            float maxAllowedDistance = Mathf.Max(map.Size.x, map.Size.z) * 0.35f;
+            float maxAllowedDistSq = maxAllowedDistance * maxAllowedDistance;
 
             Queue<IntVec3> queue = new Queue<IntVec3>();
             HashSet<IntVec3> localVisited = new HashSet<IntVec3>();
@@ -143,8 +145,6 @@ namespace VehicleRaidFramework
             queue.Enqueue(startCell);
             localVisited.Add(startCell);
             globallyVisited.Add(startCell);
-
-            float maxAllowedDistance = Mathf.Max(map.Size.x, map.Size.z) * 0.35f;
             bool reachedInland = false;
 
             while (queue.Count > 0)
@@ -152,11 +152,11 @@ namespace VehicleRaidFramework
                 IntVec3 curr = queue.Dequeue();
                 waterCellsFound++;
 
-                float dist = Vector3.Distance(curr.ToVector3(), centerPos);
-                if (dist < closestDistToCenter)
+                float distSq = (curr.x - centerPos.x) * (curr.x - centerPos.x) + (curr.z - centerPos.z) * (curr.z - centerPos.z);
+                if (distSq < closestDistSqToCenter)
                 {
-                    closestDistToCenter = dist;
-                    if (closestDistToCenter <= maxAllowedDistance)
+                    closestDistSqToCenter = distSq;
+                    if (closestDistSqToCenter <= maxAllowedDistSq)
                     {
                         reachedInland = true;
                     }
@@ -164,8 +164,9 @@ namespace VehicleRaidFramework
 
                 if (waterCellsFound >= 100 && reachedInland)
                 {
-                    foreach (var v in localVisited) validScores[v] = closestDistToCenter;
-                    score = closestDistToCenter;
+                    float finalDist = Mathf.Sqrt(closestDistSqToCenter);
+                    foreach (var v in localVisited) validScores[v] = finalDist;
+                    score = finalDist;
                     return true;
                 }
 
@@ -174,12 +175,11 @@ namespace VehicleRaidFramework
                     break; 
                 }
 
-                foreach (IntVec3 adj in GenAdj.AdjacentCells)
+                for (int i = 0; i < 4; i++)
                 {
-                    IntVec3 next = curr + adj;
-                    if (next.InBounds(map) && !localVisited.Contains(next) && IsWater(next, map))
+                    IntVec3 next = curr + GenAdj.CardinalDirections[i];
+                    if (next.InBounds(map) && localVisited.Add(next) && IsWater(next, map))
                     {
-                        localVisited.Add(next);
                         globallyVisited.Add(next);
                         queue.Enqueue(next);
                     }
@@ -189,8 +189,9 @@ namespace VehicleRaidFramework
             bool isValid = waterCellsFound >= 100 && reachedInland;
             if (isValid)
             {
-                foreach (var v in localVisited) validScores[v] = closestDistToCenter;
-                score = closestDistToCenter;
+                float finalDist = Mathf.Sqrt(closestDistSqToCenter);
+                foreach (var v in localVisited) validScores[v] = finalDist;
+                score = finalDist;
             }
             else
             {

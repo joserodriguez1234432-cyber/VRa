@@ -35,7 +35,17 @@ namespace VehicleRaidFramework
                 .OrderBy(g => g.Key)
                 .Select(g => (g.Key, g.OrderBy(d => d.label).Select(d => (d.defName, d.label)).ToList()))
                 .ToList();
+
+            const float modH = 26f;
+            const float sepH = 6f;
+            _totalContentHeight = 0f;
+            for (int i = 0; i < _groups.Count; i++)
+            {
+                _totalContentHeight += modH + 4f + _groups[i].defs.Count * RowH + sepH;
+            }
         }
+
+        private readonly float _totalContentHeight;
 
         public override void DoWindowContents(Rect inRect)
         {
@@ -77,7 +87,7 @@ namespace VehicleRaidFramework
 
             const float ModHeaderH = 26f;
             const float SepH       = 6f;
-            float totalH    = _groups.Sum(g => ModHeaderH + 4f + g.defs.Count * RowH + SepH);
+            float totalH    = _totalContentHeight;
             Rect scrollArea = new Rect(inRect.x, y, inRect.width, inRect.yMax - y - 36f);
             Rect viewRect   = new Rect(0f, 0f, scrollArea.width - 20f, totalH);
             Widgets.BeginScrollView(scrollArea, ref _scrollPos, viewRect);

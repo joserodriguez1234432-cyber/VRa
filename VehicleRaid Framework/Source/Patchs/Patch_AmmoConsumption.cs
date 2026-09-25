@@ -30,8 +30,8 @@ namespace VehicleRaidFramework
                     return false;
 
                 if (lord?.LordJob != null && (lord.LordJob is LordJob_AssaultColony || 
-                    lord.LordJob.GetType().Name.Contains(AssaultColony) || 
-                    lord.LordJob.GetType().Name.Contains(Raid)))
+                    lord.LordJob.GetType().Name.Contains("AssaultColony") || 
+                    lord.LordJob.GetType().Name.Contains("Raid")))
                     return false;
             }
 

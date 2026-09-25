@@ -62,7 +62,14 @@ namespace VehicleRaidFramework
 
         private static CompProperties_VehicleLauncher GetLauncherProps(VehicleDef vdef)
         {
-            return vdef.comps?.OfType<CompProperties_VehicleLauncher>().FirstOrDefault();
+            var comps = vdef?.comps;
+            if (comps == null) return null;
+            for (int i = 0; i < comps.Count; i++)
+            {
+                if (comps[i] is CompProperties_VehicleLauncher launcher)
+                    return launcher;
+            }
+            return null;
         }
 
         private static bool HasVerticalTakeoff(CompProperties_VehicleLauncher launcher)

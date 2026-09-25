@@ -41,7 +41,7 @@ namespace VehicleRaidFramework
                 .ToList();
 
             _raidableFactions = DefDatabase<FactionDef>.AllDefsListForReading
-                .Where(f => !f.isPlayer && f.humanlikeFaction && f.permanentEnemy || IsRaidableFaction(f))
+                .Where(f => !f.isPlayer && f.humanlikeFaction && (f.permanentEnemy || IsRaidableFaction(f)))
                 .OrderBy(f => f.label ?? f.defName)
                 .ToList();
         }
