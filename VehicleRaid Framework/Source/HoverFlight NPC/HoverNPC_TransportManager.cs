@@ -28,8 +28,10 @@ namespace VehicleRaidFramework
         private readonly Dictionary<int, int> lastPositionTick    = new Dictionary<int, int>();
         private readonly Dictionary<int, int> inRangeSinceTick    = new Dictionary<int, int>();
 
-        private static readonly Dictionary<int, IntVec3> lastExitCell   = new Dictionary<int, IntVec3>();
-        private static readonly Dictionary<int, IntVec3> lockedExitCell = new Dictionary<int, IntVec3>();
+        // These values belong to a map component. Keeping them instance-local prevents
+        // map unloads and new games from retaining stale vehicle IDs.
+        private readonly Dictionary<int, IntVec3> lastExitCell   = new Dictionary<int, IntVec3>();
+        private readonly Dictionary<int, IntVec3> lockedExitCell = new Dictionary<int, IntVec3>();
 
         public HoverNPC_TransportManager(Map map) : base(map) { }
 
@@ -390,7 +392,7 @@ namespace VehicleRaidFramework
             return null;
         }
 
-        private static void TriggerExit(VehiclePawn vehicle)
+        private void TriggerExit(VehiclePawn vehicle)
         {
             if (!vehicle.Spawned || vehicle.Map == null) return;
 
@@ -426,7 +428,8 @@ namespace VehicleRaidFramework
                 if (VehicleTrafficManager.TryFindExitCell(vehicle, out exitCell))
                 {
                     lockedExitCell[vid] = exitCell;
-                    Log.Message($"[VRF_HoverExit] {vehicle.LabelShort} (id={vid}) exit cell LOCKED: {exitCell}  realPos={hoverComp.realPos}  threshold={exitThreshold:F1}");
+                    if (VRF_Log.Enabled)
+                        Log.Message($"[VRF_HoverExit] {vehicle.LabelShort} (id={vid}) exit cell LOCKED: {exitCell}  realPos={hoverComp.realPos}  threshold={exitThreshold:F1}");
                 }
                 else
                 {
@@ -437,7 +440,8 @@ namespace VehicleRaidFramework
             {
                 if (!lastExitCell.TryGetValue(vid, out IntVec3 prev) || prev != exitCell)
                 {
-                    Log.Message($"[VRF_HoverExit] {vehicle.LabelShort} (id={vid}) using locked cell {exitCell}  realPos={hoverComp.realPos}");
+                    if (VRF_Log.Enabled)
+                        Log.Message($"[VRF_HoverExit] {vehicle.LabelShort} (id={vid}) using locked cell {exitCell}  realPos={hoverComp.realPos}");
                     lastExitCell[vid] = exitCell;
                 }
             }

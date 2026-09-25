@@ -77,12 +77,22 @@ namespace VehicleRaid
         {
             get
             {
+                int currentTick = Find.TickManager?.TicksGame ?? -1;
+                if (currentTick >= 0 && lastSpeedCheckTick == currentTick)
+                    return effectiveHoverMoveSpeed;
+
                 if (Vehicle != null && (VehicleRaidFramework.CrewManager.IsGravshipVehicle(Vehicle) || Props.flightType == FlightType.Gravship))
                 {
                     float gSpeed = VehicleRaidFramework.VehicleMapFramework.VRF_GravshipSpeedUtility.CalculateGravshipSpeed(Vehicle);
-                    if (gSpeed > 0f) return gSpeed;
+                    effectiveHoverMoveSpeed = gSpeed > 0f ? gSpeed : Props.hoverMoveSpeed;
                 }
-                return Props.hoverMoveSpeed;
+                else
+                {
+                    effectiveHoverMoveSpeed = Props.hoverMoveSpeed;
+                }
+
+                lastSpeedCheckTick = currentTick;
+                return effectiveHoverMoveSpeed;
             }
         }
 
@@ -97,6 +107,15 @@ namespace VehicleRaid
         private Command_Action jumpCommand;
 
         private HoverVehicleProjectile dummyProjectile;
+        private CompFueledTravel fuelComp;
+        private CompVehicleTurrets turretsComp;
+        private bool engineBroken;
+        private bool fuelTankBroken;
+        private int lastDamageStateCheckTick = -1;
+        private int lastPilotCheckTick = -1;
+        private bool pilotAvailable;
+        private int lastSpeedCheckTick = -1;
+        private float effectiveHoverMoveSpeed;
 
         public override void PostSpawnSetup(bool respawningAfterLoad)
         {
@@ -106,9 +125,35 @@ namespace VehicleRaid
                 realPos = new Vector2(Vehicle.Position.x + 0.5f, Vehicle.Position.z + 0.5f);
                 targetPos = realPos;
             }
+            CacheVehicleComps();
+            RefreshCriticalDamageState();
+            HoverVehicleRegistry.Register(Vehicle);
+        }
+
+        public override void PostDeSpawn(Map map, DestroyMode mode = DestroyMode.Vanish)
+        {
+            HoverVehicleRegistry.Deregister(Vehicle, map);
+            base.PostDeSpawn(map, mode);
+        }
+
+        public override void PostPostApplyDamage(DamageInfo dinfo, float totalDamageDealt)
+        {
+            base.PostPostApplyDamage(dinfo, totalDamageDealt);
+            RefreshCriticalDamageState();
         }
 
         public bool HasPilot()
+        {
+            int currentTick = Find.TickManager?.TicksGame ?? -1;
+            if (currentTick >= 0 && lastPilotCheckTick == currentTick)
+                return pilotAvailable;
+
+            pilotAvailable = CalculateHasPilot();
+            lastPilotCheckTick = currentTick;
+            return pilotAvailable;
+        }
+
+        private bool CalculateHasPilot()
         {
             if (Vehicle == null) return false;
 
@@ -161,6 +206,41 @@ namespace VehicleRaid
 
             if (!Vehicle.HasEnoughOperators) return false;
             return CrewManager.HasOperationalDriver(Vehicle);
+        }
+
+        private void CacheVehicleComps()
+        {
+            if (Vehicle == null) return;
+            fuelComp = Vehicle.GetComp<CompFueledTravel>();
+            turretsComp = Vehicle.GetComp<CompVehicleTurrets>();
+        }
+
+        private void RefreshCriticalDamageState()
+        {
+            if (Vehicle == null || CrewManager.IsGravshipVehicle(Vehicle))
+            {
+                engineBroken = false;
+                fuelTankBroken = false;
+                return;
+            }
+
+            engineBroken = false;
+            fuelTankBroken = false;
+            if (Vehicle.statHandler?.components == null) return;
+
+            foreach (VehicleComponent part in Vehicle.statHandler.components)
+            {
+                if (part.Health > 0 || part.props == null) continue;
+                if (part.props.key == "Engine" || (part.props.tags != null && part.props.tags.Contains("engine")))
+                    engineBroken = true;
+                else if (part.props.key == "Chemtank" || part.props.key == "FuelTank" ||
+                         (part.props.tags != null && part.props.tags.Contains("fuel_tank")))
+                    fuelTankBroken = true;
+
+                if (engineBroken && fuelTankBroken) break;
+            }
+
+            lastDamageStateCheckTick = Find.TickManager?.TicksGame ?? -1;
         }
 
         public override void PostExposeData()
@@ -631,13 +711,18 @@ namespace VehicleRaid
 
             if (!Vehicle.Spawned || Vehicle.Map == null) return;
 
+            // Damage callbacks keep this current immediately; the interval also catches repairs
+            // performed by other mods without repeatedly scanning every vehicle component.
+            if (lastDamageStateCheckTick < 0 || Vehicle.IsHashIntervalTick(120))
+                RefreshCriticalDamageState();
+
             float currentRot = Vehicle.Transform.rotation;
             float deltaRot = currentRot - lastTransformRotation;
             lastTransformRotation = currentRot;
 
             if (deltaRot != 0f && IsAirborne)
             {
-                var turretsComp = Vehicle.GetComp<Vehicles.CompVehicleTurrets>();
+                if (turretsComp == null) CacheVehicleComps();
                 if (turretsComp != null && turretsComp.turrets != null)
                 {
                     foreach (var turret in turretsComp.turrets)
@@ -665,24 +750,8 @@ namespace VehicleRaid
             {
                 if (Vehicle.IsHashIntervalTick(250))
                 {
-                    if (engineNotificationSent || fuelTankNotificationSent)
-                    {
-                        bool eBroken = false;
-                        bool fBroken = false;
-                        if (Vehicle.statHandler?.components != null)
-                        {
-                            foreach (var part in Vehicle.statHandler.components)
-                            {
-                                if (part.Health <= 0)
-                                {
-                                    if (part.props?.key == "Engine" || (part.props?.tags != null && part.props.tags.Contains("engine"))) eBroken = true;
-                                    else if (part.props?.key == "Chemtank" || part.props?.key == "FuelTank" || (part.props?.tags != null && part.props.tags.Contains("fuel_tank"))) fBroken = true;
-                                }
-                            }
-                        }
-                        if (!eBroken) engineNotificationSent = false;
-                        if (!fBroken) fuelTankNotificationSent = false;
-                    }
+                    if (!engineBroken) engineNotificationSent = false;
+                    if (!fuelTankBroken) fuelTankNotificationSent = false;
                 }
 
                 if (Vehicle.Faction != null &&
@@ -699,20 +768,6 @@ namespace VehicleRaid
             {
                 // Gravships manage their own flight systems — no crash-on-damage or crash-on-fuel-loss
                 bool isGravship = CrewManager.IsGravshipVehicle(Vehicle);
-
-                bool engineBroken = false;
-                bool fuelTankBroken = false;
-                if (!isGravship && Vehicle.statHandler?.components != null)
-                {
-                    foreach (var part in Vehicle.statHandler.components)
-                    {
-                        if (part.Health <= 0)
-                        {
-                            if (part.props?.key == "Engine" || (part.props?.tags != null && part.props.tags.Contains("engine"))) engineBroken = true;
-                            else if (part.props?.key == "Chemtank" || part.props?.key == "FuelTank" || (part.props?.tags != null && part.props.tags.Contains("fuel_tank"))) fuelTankBroken = true;
-                        }
-                    }
-                }
 
                 if (engineBroken && !engineNotificationSent && Vehicle.Faction == Faction.OfPlayer)
                 {
@@ -741,7 +796,7 @@ namespace VehicleRaid
                     ticksWithoutPilot = 0;
                 }
 
-                CompFueledTravel fuelComp = Vehicle.GetComp<CompFueledTravel>();
+                if (fuelComp == null) CacheVehicleComps();
                 if (!isGravship && fuelComp != null && fuelComp.Fuel <= 0)
                 {
                     ticksWithoutFuel++;
@@ -896,7 +951,7 @@ namespace VehicleRaid
                         return;
                 }
 
-                if (Find.TickManager.TicksGame % 15 == 0)
+                if (Vehicle.IsHashIntervalTick(15))
                 {
                     bool readyToFire = HoverNPC_AirplaneCombatPlanner.IsReadyToFire(Vehicle, this, enemy);
 
@@ -914,7 +969,7 @@ namespace VehicleRaid
                 return;
             }
 
-            if (Find.TickManager.TicksGame % 15 != 0) return;
+            if (!Vehicle.IsHashIntervalTick(15)) return;
 
             AssignTurretTargets();
         }
@@ -1343,7 +1398,8 @@ namespace VehicleRaid
         {
             if (!Vehicle.AllPawnsAboard.Any()) return;
             
-            CompFueledTravel comp = Vehicle.GetComp<CompFueledTravel>();
+            if (fuelComp == null) CacheVehicleComps();
+            CompFueledTravel comp = fuelComp;
             if (comp == null || comp.Props.ElectricPowered) return;
 
             float needed = comp.FuelCapacity - comp.Fuel;
@@ -1519,7 +1575,21 @@ namespace VehicleRaid
             }
         }
 
+        
         private static MaterialPropertyBlock s_ThrusterFlameBlock;
+        private static readonly Dictionary<Shader, Material> s_ThrusterMaterialCache = new Dictionary<Shader, Material>();
+
+        private static Material GetOrCreateThrusterMaterial(Shader shader)
+        {
+            if (shader == null) shader = ShaderTypeDefOf.MoteGlow.Shader;
+            if (!s_ThrusterMaterialCache.TryGetValue(shader, out Material mat))
+            {
+                mat = MaterialPool.MatFrom(new MaterialRequest(shader) { renderQueue = 3201 });
+                s_ThrusterMaterialCache[shader] = mat;
+            }
+            return mat;
+        }
+
         private static MaterialPropertyBlock ThrusterFlameBlock
         {
             get
@@ -1546,12 +1616,18 @@ namespace VehicleRaid
                 flameOffset = thrusterQuat * props.flameOffsetsPerDirection[thrusterRot.AsInt];
             }
 
-            Vector3 localFlamePos = b.DrawPos - thrusterRot.FacingCell.ToVector3() * ((float)b.def.size.z * 0.5f + scale * 0.5f) + flameOffset;
-            Vector3 worldFlamePos = global::VehicleMapFramework.VehicleMapUtility.ToBaseMapCoord(localFlamePos, gravVehicle);
+            Vector3 thrusterWorldFacing = Quaternion.AngleAxis(currentFlyAngle, Vector3.up) * thrusterRot.FacingCell.ToVector3();
+            if (props.flameOffsetsPerDirection != null && props.flameOffsetsPerDirection.Count > thrusterRot.AsInt)
+            {
+                flameOffset = Quaternion.AngleAxis(currentFlyAngle + thrusterRot.AsAngle, Vector3.up) * props.flameOffsetsPerDirection[thrusterRot.AsInt];
+            }
+            // En VMF, Patch_GenThing_TrueCenter intercepta b.DrawPos y ya devuelve la coordenada exacta del mundo base.
+            // NO se debe volver a proyectar con ToBaseMapCoord ni sumarle realPos/pivote, porque duplicaba la coordenada mandando el fuego a 100+ celdas.
+            Vector3 worldFlamePos = b.DrawPos - thrusterWorldFacing * ((float)b.def.size.z * 0.5f + scale * 0.5f) + flameOffset;
             worldFlamePos.y = AltitudeLayer.MetaOverlays.AltitudeFor() + 0.05f;
 
             Shader shader = props.FlameShaderType?.Shader ?? ShaderTypeDefOf.MoteGlow.Shader;
-            Material mat = MaterialPool.MatFrom(new MaterialRequest(shader) { renderQueue = 3201 });
+            Material mat = GetOrCreateThrusterMaterial(shader);
 
             MaterialPropertyBlock block = ThrusterFlameBlock;
             block.Clear();
@@ -1588,7 +1664,7 @@ namespace VehicleRaid
             float scale = Mathf.Max(2.5f, Vehicle.def.Size.x * 0.5f) * thrustFactor;
 
             Shader shader = ShaderTypeDefOf.MoteGlow.Shader;
-            Material mat = MaterialPool.MatFrom(new MaterialRequest(shader) { renderQueue = 3201 });
+            Material mat = GetOrCreateThrusterMaterial(shader);
 
             MaterialPropertyBlock block = ThrusterFlameBlock;
             block.Clear();
@@ -1627,18 +1703,18 @@ namespace VehicleRaid
                         if (t is Building b && !b.Destroyed && b.TryGetComp<CompGravshipThruster>() is CompGravshipThruster thrusterComp)
                         {
                             Rot4 rot = b.Rotation;
-                            Vector3 localPos = b.DrawPos - rot.FacingCell.ToVector3() * ((float)b.def.size.z * 0.5f + 0.5f);
-                            Vector3 worldPos = global::VehicleMapFramework.VehicleMapUtility.ToBaseMapCoord(localPos, gravVehicle);
+                            Vector3 thrusterWorldFacing = Quaternion.AngleAxis(currentFlyAngle, Vector3.up) * rot.FacingCell.ToVector3();
+                            Vector3 exhaustDir = -thrusterWorldFacing;
+                            // b.DrawPos ya está en coordenadas de mundo por el parche de VMF
+                            Vector3 worldPos = b.DrawPos - thrusterWorldFacing * ((float)b.def.size.z * 0.5f + 0.5f);
                             worldPos.y = Altitudes.AltitudeFor(AltitudeLayer.MoteOverhead);
-
-                            Vector3 exhaustDir = -(Quaternion.AngleAxis(currentFlyAngle + rot.AsAngle, Vector3.up) * Vector3.forward);
 
                             FleckCreationData fleckData = new FleckCreationData
                             {
                                 def = exhaustFleck,
                                 spawnPosition = worldPos + UnityEngine.Random.insideUnitSphere * 0.2f,
                                 scale = UnityEngine.Random.Range(1.3f, 2.2f),
-                                velocity = exhaustDir * UnityEngine.Random.Range(5f, 9f) + UnityEngine.Random.insideUnitSphere * 0.35f,
+                                velocity = exhaustDir * UnityEngine.Random.Range(0.25f, 0.6f) + UnityEngine.Random.insideUnitSphere * 0.15f,
                                 rotationRate = UnityEngine.Random.Range(-30f, 30f),
                                 ageTicksOverride = -1
                             };
@@ -1674,7 +1750,7 @@ namespace VehicleRaid
                             def = exhaustFleck,
                             spawnPosition = emitterPos + UnityEngine.Random.insideUnitSphere * 0.15f,
                             scale = UnityEngine.Random.Range(1.2f, 2.0f),
-                            velocity = exhaustDir * UnityEngine.Random.Range(5f, 9f) + UnityEngine.Random.insideUnitSphere * 0.4f,
+                            velocity = exhaustDir * UnityEngine.Random.Range(0.25f, 0.6f) + UnityEngine.Random.insideUnitSphere * 0.2f,
                             rotationRate = UnityEngine.Random.Range(-35f, 35f),
                             ageTicksOverride = -1
                         };

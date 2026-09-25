@@ -73,15 +73,20 @@ namespace VehicleRaid
         {
             if (___map == null) return;
 
-            foreach (var pawn in ___map.mapPawns.AllPawnsSpawned)
+            CellRect viewRect = Find.CameraDriver.CurrentViewRect.ExpandedBy(2);
+            IReadOnlyList<VehiclePawn> hoverVehicles = HoverVehicleRegistry.Get(___map);
+            for (int i = hoverVehicles.Count - 1; i >= 0; i--)
             {
-                if (!(pawn is VehiclePawn vehicle)) continue;
+                VehiclePawn vehicle = hoverVehicles[i];
+                if (vehicle == null || !vehicle.Spawned || vehicle.Map != ___map)
+                {
+                    HoverVehicleRegistry.Deregister(vehicle, ___map);
+                    continue;
+                }
+
                 var hoverComp = vehicle.GetComp<CompVehicleHover>();
                 if (hoverComp == null || hoverComp.State == HoverState.Grounded) continue;
-                if (!vehicle.Spawned || vehicle.Map == null) continue;
                 if (!vehicle.Position.InBounds(___map)) continue;
-
-                CellRect viewRect = Find.CameraDriver.CurrentViewRect.ExpandedBy(2);
                 if (!viewRect.Contains(vehicle.Position)) continue;
 
                 if (!___map.fogGrid.IsFogged(vehicle.Position)) continue;
@@ -144,7 +149,7 @@ namespace VehicleRaid
         {
             __instance.def.altitudeLayer = __state;
 
-            if (phase == (DrawPhase)2)
+            if (phase == (DrawPhase)2 && !(__instance is global::VehicleMapFramework.VehiclePawnWithMap))
             {
                 var hoverComp = __instance.GetComp<CompVehicleHover>();
                 if (hoverComp != null && hoverComp.State != HoverState.Grounded)
@@ -152,6 +157,14 @@ namespace VehicleRaid
                     hoverComp.DrawGravshipThrusters();
                 }
             }
+        }
+
+        [HarmonyFinalizer]
+        public static Exception Finalizer(VehiclePawn __instance, AltitudeLayer __state, Exception __exception)
+        {
+            if (__instance?.def != null)
+                __instance.def.altitudeLayer = __state;
+            return __exception;
         }
     }
 
@@ -727,14 +740,12 @@ namespace VehicleRaid
     [HarmonyPatch(typeof(Verse.AI.PathGrid), "CalculatedCostAt")]
     public static class VehicleHover_PathGridCost_Patch
     {
-        private static FieldInfo mapField = AccessTools.Field(typeof(Verse.AI.PathGrid), "map");
-
         [HarmonyPriority(Priority.Last)]
         [HarmonyPostfix]
-        public static void Postfix(Verse.AI.PathGrid __instance, IntVec3 c, ref int __result)
+        public static void Postfix(Verse.AI.PathGrid __instance, IntVec3 c, Map ___map, ref int __result)
         {
-            Map map = (Map)mapField.GetValue(__instance);
-            if (map == null) return;
+            if (___map == null) return;
+            Map map = ___map;
 
             var thingList = map.thingGrid.ThingsListAtFast(c);
             bool hasAirborne = false;
@@ -774,33 +785,6 @@ namespace VehicleRaid
                 {
                     __result = baseCost;
                 }
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(Verse.Thing), nameof(Verse.Thing.TakeDamage))]
-    public static class VehicleHover_ThingTakeDamage_Debug
-    {
-        [HarmonyPrefix]
-        public static void Prefix(Verse.Thing __instance, DamageInfo dinfo)
-        {
-            if (!(__instance is Pawn pawn)) return;
-            if (dinfo.Def != DamageDefOf.Blunt) return;
-            if (pawn.Map == null) return;
-
-            foreach (Pawn p in pawn.Map.mapPawns.AllPawnsSpawned)
-            {
-                if (!(p is VehiclePawn v)) continue;
-                var hc = v.GetComp<CompVehicleHover>();
-                if (hc == null || !hc.IsAirborne) continue;
-                if (v.Position.DistanceTo(pawn.Position) > 20f) continue;
-
-                Log.Warning($"[VRF_DBG] Pawn {pawn.LabelShort} taking Blunt {dinfo.Amount:F1} dmg." +
-                    $" Instigator={dinfo.Instigator?.LabelShort ?? "null"}" +
-                    $" Weapon={dinfo.Weapon?.defName ?? "null"}" +
-                    $" Nearby hover={v.LabelShort} state={hc.State}" +
-                    $"\nStack: {System.Environment.StackTrace}");
-                break;
             }
         }
     }
@@ -1072,29 +1056,6 @@ namespace VehicleRaid
         }
     }
 
-    [HarmonyPatch]
-    public static class Patch_Projectile_Tick_HoverDummy
-    {
-        public static System.Collections.Generic.IEnumerable<System.Reflection.MethodBase> TargetMethods()
-        {
-            yield return AccessTools.Method(typeof(Projectile), "Tick");
-            var tickInterval = AccessTools.Method(typeof(Projectile), "TickInterval");
-            if (tickInterval != null)
-                yield return tickInterval;
-        }
-
-        [HarmonyPrefix]
-        public static bool Prefix(Projectile __instance)
-        {
-            if (__instance is HoverVehicleProjectile dummy)
-            {
-                dummy.CustomTick();
-                return false;
-            }
-            return true;
-        }
-    }
-
     [HarmonyPatch(typeof(FleckMaker), nameof(FleckMaker.Static), new Type[] { typeof(UnityEngine.Vector3), typeof(Map), typeof(FleckDef), typeof(float) })]
     public static class Patch_FleckMaker_Static_HoverSafe
     {
@@ -1136,10 +1097,11 @@ namespace VehicleRaid
             var hoverComp = __instance.GetComp<CompVehicleHover>();
             if (hoverComp != null && hoverComp.IsAirborne)
             {
-                Log.Message($"[VRF_DBG] CheckForCollisions BLOCKED for airborne hover {__instance.LabelShort}");
+                if (VRF_Log.Enabled)
+                    Log.Message($"[VRF_DBG] CheckForCollisions BLOCKED for airborne hover {__instance.LabelShort}");
                 return false;
             }
-            if (hoverComp != null)
+            if (hoverComp != null && VRF_Log.Enabled)
                 Log.Message($"[VRF_DBG] CheckForCollisions ALLOWED for hover {__instance.LabelShort} state={hoverComp.State}");
             return true;
         }
@@ -1185,19 +1147,27 @@ namespace VehicleRaid
         {
             var flyingGetter = AccessTools.PropertyGetter(typeof(Pawn), nameof(Pawn.Flying));
             bool patched = false;
+            CodeInstruction prev = null;
 
             foreach (var instr in instructions)
             {
-                yield return instr;
-
                 if (!patched && instr.Calls(flyingGetter))
                 {
-                    yield return new CodeInstruction(OpCodes.Ldloc_S, (byte)4);
-                    yield return new CodeInstruction(OpCodes.Call,
-                        AccessTools.Method(typeof(VehicleHover_TrapTick_Patch), nameof(IsHoverAirborne)));
-                    yield return new CodeInstruction(OpCodes.Or);
-                    patched = true;
+                    yield return instr;
+
+                    if (prev != null)
+                    {
+                        yield return prev.Clone();
+                        yield return new CodeInstruction(OpCodes.Call,
+                            AccessTools.Method(typeof(VehicleHover_TrapTick_Patch), nameof(IsHoverAirborne)));
+                        yield return new CodeInstruction(OpCodes.Or);
+                        patched = true;
+                    }
+                    continue;
                 }
+
+                prev = instr;
+                yield return instr;
             }
         }
 
@@ -1218,11 +1188,12 @@ namespace VehicleRaid
             var hoverComp = vehicle.GetComp<CompVehicleHover>();
             if (hoverComp != null && hoverComp.IsAirborne)
             {
-                Log.Message($"[VRF_DBG] CalculateImpactDamage BLOCKED: hover {vehicle.LabelShort} airborne, would have hit {pawn.LabelShort}, velocity={velocity}");
+                if (VRF_Log.Enabled)
+                    Log.Message($"[VRF_DBG] CalculateImpactDamage BLOCKED: hover {vehicle.LabelShort} airborne, would have hit {pawn.LabelShort}, velocity={velocity}");
                 __result = (0f, 0f);
                 return false;
             }
-            if (hoverComp != null)
+            if (hoverComp != null && VRF_Log.Enabled)
                 Log.Message($"[VRF_DBG] CalculateImpactDamage ALLOWED: hover {vehicle.LabelShort} state={hoverComp.State}, hitting {pawn.LabelShort}, velocity={velocity}");
             return true;
         }

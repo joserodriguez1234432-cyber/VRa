@@ -25,7 +25,17 @@ namespace VehicleRaid
             }
         }
 
-        public void CustomTick()
+        public override void Tick()
+        {
+            CustomTick();
+        }
+
+        public override void TickInterval(int delta)
+        {
+            base.TickInterval(delta);
+        }
+
+        private void CustomTick()
         {
             if (vehicle == null || !vehicle.Spawned || vehicle.Map != this.Map)
             {
@@ -105,7 +115,8 @@ namespace VehicleRaid
         {
             if (!cleanDestroy && vehicle != null && vehicle.Spawned && !skipStandardDamage)
             {
-                Log.Warning($"[VRF] Dummy projectile NON-CLEAN destroy at {this.Position}! Mode={mode}\n{System.Environment.StackTrace}");
+                if (VehicleRaidFramework.VRF_Log.Enabled)
+                    Log.Warning($"[VRF] Dummy projectile NON-CLEAN destroy at {this.Position}! Mode={mode}\n{System.Environment.StackTrace}");
                 var hoverComp = vehicle.GetComp<CompVehicleHover>();
                 if (hoverComp != null && hoverComp.IsAirborne && hoverComp.State != HoverState.Crashing)
                 {

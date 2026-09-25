@@ -11,6 +11,118 @@ using SmashTools;
 
 namespace VehicleRaidFramework
 {
+    // Duty defs are immutable after def loading. Resolve each fallback once instead of doing
+    // repeated DefDatabase lookups whenever a lord refreshes its duties.
+    internal static class VRF_AIDutyDefs
+    {
+        internal static readonly DutyDef SearchAndDestroy =
+            VRF_DutyDefOf.VRF_VehicleSearchAndDestroy ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleSearchAndDestroy");
+        internal static readonly DutyDef Transport =
+            VRF_DutyDefOf.VRF_VehicleTransport ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleTransport");
+        internal static readonly DutyDef ArmedTransport =
+            VRF_DutyDefOf.VRF_VehicleArmedTransport ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleArmedTransport");
+        internal static readonly DutyDef ExitMap =
+            VRF_DutyDefOf.VRF_VehicleExitMap ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleExitMap");
+        internal static readonly DutyDef HelicopterTakeoff =
+            DefDatabase<DutyDef>.GetNamedSilentFail("VRF_HelicopterTakeoff");
+        internal static readonly DutyDef InfantryAssault =
+            VRF_DutyDefOf.VRF_InfantryAssault ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_InfantryAssault");
+        internal static readonly DutyDef InfantryAssaultTransport =
+            VRF_DutyDefOf.VRF_InfantryAssault_Transport ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_InfantryAssault_Transport");
+        internal static readonly DutyDef InfantryExit =
+            VRF_DutyDefOf.VRF_InfantryExit ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_InfantryExit");
+        internal static readonly DutyDef HoldStrict =
+            VRF_DutyDefOf.VRF_VehicleHoldStrict ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleHoldStrict");
+        internal static readonly DutyDef DefendBase =
+            VRF_DutyDefOf.VRF_VehicleDefendBase ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleDefendBase");
+        internal static readonly JobDef Board = DefDatabase<JobDef>.GetNamedSilentFail("Board");
+        internal static readonly JobDef VehicleExitMap = DefDatabase<JobDef>.GetNamedSilentFail("VRF_VehicleExitMap");
+    }
+
+    internal static class VehicleReachabilityCache
+    {
+        private const int CacheLifetimeTicks = 45;
+        private const int MaxEntries = 512;
+        private static readonly Dictionary<ReachabilityKey, ReachabilityValue> entries =
+            new Dictionary<ReachabilityKey, ReachabilityValue>();
+        private static readonly List<ReachabilityKey> staleKeys = new List<ReachabilityKey>();
+
+        internal static bool CanReach(VehiclePawn vehicle, IntVec3 destination, PathEndMode endMode)
+        {
+            int now = Find.TickManager.TicksGame;
+            ReachabilityKey key = new ReachabilityKey(vehicle.Map.uniqueID, vehicle.thingIDNumber,
+                vehicle.Position, destination, endMode);
+            if (entries.TryGetValue(key, out ReachabilityValue cached) && now - cached.tick <= CacheLifetimeTicks)
+                return cached.canReach;
+
+            bool canReach = vehicle.CanReachVehicle(new LocalTargetInfo(destination), endMode,
+                Danger.Deadly, TraverseMode.NoPassClosedDoors);
+            entries[key] = new ReachabilityValue(now, canReach);
+
+            if (entries.Count > MaxEntries)
+                RemoveStale(now);
+            return canReach;
+        }
+
+        private static void RemoveStale(int now)
+        {
+            staleKeys.Clear();
+            foreach (KeyValuePair<ReachabilityKey, ReachabilityValue> entry in entries)
+            {
+                if (now - entry.Value.tick > CacheLifetimeTicks)
+                    staleKeys.Add(entry.Key);
+            }
+            foreach (ReachabilityKey key in staleKeys)
+                entries.Remove(key);
+        }
+
+        private struct ReachabilityKey : IEquatable<ReachabilityKey>
+        {
+            private readonly int mapId;
+            private readonly int vehicleId;
+            private readonly IntVec3 origin;
+            private readonly IntVec3 destination;
+            private readonly PathEndMode endMode;
+
+            internal ReachabilityKey(int mapId, int vehicleId, IntVec3 origin, IntVec3 destination, PathEndMode endMode)
+            {
+                this.mapId = mapId;
+                this.vehicleId = vehicleId;
+                this.origin = origin;
+                this.destination = destination;
+                this.endMode = endMode;
+            }
+
+            public bool Equals(ReachabilityKey other) => mapId == other.mapId && vehicleId == other.vehicleId &&
+                origin == other.origin && destination == other.destination && endMode == other.endMode;
+
+            public override bool Equals(object obj) => obj is ReachabilityKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = mapId;
+                    hash = (hash * 397) ^ vehicleId;
+                    hash = (hash * 397) ^ origin.GetHashCode();
+                    hash = (hash * 397) ^ destination.GetHashCode();
+                    return (hash * 397) ^ (int)endMode;
+                }
+            }
+        }
+
+        private struct ReachabilityValue
+        {
+            internal readonly int tick;
+            internal readonly bool canReach;
+
+            internal ReachabilityValue(int tick, bool canReach)
+            {
+                this.tick = tick;
+                this.canReach = canReach;
+            }
+        }
+    }
 
     public class LordJob_VehicleRaid : LordJob
     {
@@ -207,8 +319,7 @@ namespace VehicleRaidFramework
 
                         if (isStagingOrSieging)
                         {
-                            DutyDef vehicleHoldDuty = VRF_DutyDefOf.VRF_VehicleSearchAndDestroy
-                                ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleSearchAndDestroy", false);
+                            DutyDef vehicleHoldDuty = VRF_AIDutyDefs.SearchAndDestroy;
                             if (vehicleHoldDuty != null &&
                                 (pawn.mindState.duty?.def != vehicleHoldDuty ||
                                  pawn.mindState.duty?.focus.Cell != targetSpot))
@@ -226,19 +337,18 @@ namespace VehicleRaidFramework
                         DutyDef vehicleDuty;
                         if (isSiegeDrop)
                         {
-                            vehicleDuty = VRF_DutyDefOf.VRF_VehicleSearchAndDestroy
-                                ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleSearchAndDestroy", false);
+                            vehicleDuty = VRF_AIDutyDefs.SearchAndDestroy;
                             if (vehicleDuty != null && pawn.mindState.duty?.def != vehicleDuty)
                                 pawn.mindState.duty = new PawnDuty(vehicleDuty, v.Position);
                         }
                         else if (isHoverAirborne && isTransport)
-                            vehicleDuty = VRF_DutyDefOf.VRF_VehicleTransport ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleTransport", false);
+                            vehicleDuty = VRF_AIDutyDefs.Transport;
                         else if (isTransport)
-                            vehicleDuty = VRF_DutyDefOf.VRF_VehicleTransport ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleTransport", false);
+                            vehicleDuty = VRF_AIDutyDefs.Transport;
                         else if (VRF_TransportUtil.IsArmedTransportVehicle(v))
-                            vehicleDuty = VRF_DutyDefOf.VRF_VehicleArmedTransport ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleArmedTransport", false) ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleSearchAndDestroy", false);
+                            vehicleDuty = VRF_AIDutyDefs.ArmedTransport ?? VRF_AIDutyDefs.SearchAndDestroy;
                         else
-                            vehicleDuty = VRF_DutyDefOf.VRF_VehicleSearchAndDestroy ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleSearchAndDestroy", false);
+                            vehicleDuty = VRF_AIDutyDefs.SearchAndDestroy;
 
                         if (!isSiegeDrop && vehicleDuty != null && pawn.mindState.duty?.def != vehicleDuty)
                             pawn.mindState.duty = new PawnDuty(vehicleDuty);
@@ -262,8 +372,8 @@ namespace VehicleRaidFramework
                             else
                             {
                             DutyDef infantryDuty = hasTransport
-                                ? (VRF_DutyDefOf.VRF_InfantryAssault_Transport ?? DefDatabase<DutyDef>.GetNamed("VRF_InfantryAssault_Transport", false))
-                                : (VRF_DutyDefOf.VRF_InfantryAssault ?? DefDatabase<DutyDef>.GetNamed("VRF_InfantryAssault", false));
+                                ? VRF_AIDutyDefs.InfantryAssaultTransport
+                                : VRF_AIDutyDefs.InfantryAssault;
 
                             if (pawn.mindState.duty?.def != infantryDuty)
                                 pawn.mindState.duty = new PawnDuty(infantryDuty);
@@ -395,24 +505,23 @@ namespace VehicleRaidFramework
                             bool isHoverAirborne = v.GetComp<VehicleRaid.CompVehicleHover>()?.IsAirborne == true;
                             if (VRF_TransportUtil.IsSiegeDropVehicle(v))
                             {
-                                vehicleDuty = DefDatabase<DutyDef>.GetNamedSilentFail("VRF_HelicopterTakeoff")
-                                    ?? DutyDefOf.ExitMapBest;
+                                vehicleDuty = VRF_AIDutyDefs.HelicopterTakeoff ?? DutyDefOf.ExitMapBest;
                             }
                             else if (isHoverAirborne && VRF_TransportUtil.IsTransportVehicle(v))
                             {
-                                vehicleDuty = VRF_DutyDefOf.VRF_VehicleExitMap ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleExitMap", false) ?? DutyDefOf.ExitMapBest;
+                                vehicleDuty = VRF_AIDutyDefs.ExitMap ?? DutyDefOf.ExitMapBest;
                             }
                             else if (VRF_TransportUtil.IsTransportVehicle(v) && HasAllyInfantryInLord(this.lord))
                             {
-                                vehicleDuty = VRF_DutyDefOf.VRF_VehicleTransport ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleTransport", false);
+                                vehicleDuty = VRF_AIDutyDefs.Transport;
                             }
                             else if (VRF_TransportUtil.IsArmedTransportVehicle(v) && HasAllyInfantryInLord(this.lord))
                             {
-                                vehicleDuty = VRF_DutyDefOf.VRF_VehicleArmedTransport ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleArmedTransport", false) ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleExitMap", false) ?? DutyDefOf.ExitMapBest;
+                                vehicleDuty = VRF_AIDutyDefs.ArmedTransport ?? VRF_AIDutyDefs.ExitMap ?? DutyDefOf.ExitMapBest;
                             }
                             else
                             {
-                                vehicleDuty = VRF_DutyDefOf.VRF_VehicleExitMap ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleExitMap", false) ?? DutyDefOf.ExitMapBest;
+                                vehicleDuty = VRF_AIDutyDefs.ExitMap ?? DutyDefOf.ExitMapBest;
                             }
                             if (pawn.mindState.duty?.def != vehicleDuty)
                                 pawn.mindState.duty = new PawnDuty(vehicleDuty);
@@ -445,7 +554,7 @@ namespace VehicleRaidFramework
                                 VehicleRoleHandler handler = VRF_TransportUtil.GetBestAvailableHandler(targetPod, pawn);
                                 if (handler != null && pawn.CanReach(targetPod, PathEndMode.Touch, Danger.Deadly))
                                 {
-                                    JobDef boardJobDef = DefDatabase<JobDef>.GetNamed("Board", false);
+                                    JobDef boardJobDef = VRF_AIDutyDefs.Board;
                                     if (boardJobDef != null)
                                     {
                                         targetPod.GiveLoadJob(pawn, handler);
@@ -464,9 +573,7 @@ namespace VehicleRaidFramework
 
                         if (!boardedOrExiting)
                         {
-                            var dutyDef = VRF_DutyDefOf.VRF_InfantryExit
-                                ?? DefDatabase<DutyDef>.GetNamed("VRF_InfantryExit", false)
-                                ?? DutyDefOf.ExitMapBest;
+                            var dutyDef = VRF_AIDutyDefs.InfantryExit ?? DutyDefOf.ExitMapBest;
                             if (pawn.mindState.duty?.def != dutyDef)
                                 pawn.mindState.duty = new PawnDuty(dutyDef);
                         }
@@ -582,7 +689,7 @@ namespace VehicleRaidFramework
             float minRange = vehicle.CompVehicleTurrets?.MinRange ?? 0f;
             float idealRange = Mathf.Clamp(maxRange * 0.7f, minRange + 3f, maxRange - 2f);
             int vehicleWidth = (vehicle.Rotation == Rot4.North || vehicle.Rotation == Rot4.South) ? vehicle.def.size.x : vehicle.def.size.z;
-            if (vehicle.CanReachVehicle(new LocalTargetInfo(enemy.Position), PathEndMode.Touch, Danger.Deadly, TraverseMode.NoPassClosedDoors))
+            if (VehicleReachabilityCache.CanReach(vehicle, enemy.Position, PathEndMode.Touch))
             {
                 return HandleDirectAssault(vehicle, enemy, idealRange, maxRange, minRange);
             }
@@ -620,7 +727,7 @@ namespace VehicleRaidFramework
 
             if (wallToBreak == null)
             {
-                if (vehicle.CanReachVehicle(new LocalTargetInfo(enemy.Position), PathEndMode.Touch, Danger.Deadly, TraverseMode.NoPassClosedDoors))
+                if (VehicleReachabilityCache.CanReach(vehicle, enemy.Position, PathEndMode.Touch))
                 {
                     return HandleDirectAssault(vehicle, enemy, idealRange, maxRange, minRange);
                 }
@@ -921,9 +1028,11 @@ namespace VehicleRaidFramework
             float distVehicleToTarget = vehicle.Position.DistanceTo(target.Position);
             bool tooClose = distVehicleToTarget < minRange + 1f;
 
-            foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
+            // Vehicle Framework already maintains this exact map-local list. Avoid walking
+            // every colonist, raider, animal, and pawn aboard a vehicle for each AI decision.
+            foreach (VehiclePawn v in map.GetDetachedMapComponent<VehiclePositionManager>().AllClaimants)
             {
-                if (p is VehiclePawn v && v != vehicle && v.Faction == vehicle.Faction)
+                if (v != vehicle && v.Faction == vehicle.Faction)
                 {
                     int vSize = Mathf.Max(v.def.size.x, v.def.size.z);
                     allyRects.Add(v.OccupiedRect().ExpandedBy(3));
@@ -999,7 +1108,7 @@ namespace VehicleRaidFramework
             foreach (var kvp in candidates)
             {
                 if (pathChecks++ >= maxPathChecks) break;
-                if (vehicle.CanReachVehicle(new LocalTargetInfo(kvp.Key), PathEndMode.OnCell, Danger.Deadly, TraverseMode.NoPassClosedDoors))
+                if (VehicleReachabilityCache.CanReach(vehicle, kvp.Key, PathEndMode.OnCell))
                 {
                     return kvp.Key;
                 }
@@ -1204,7 +1313,7 @@ namespace VehicleRaidFramework
                     }
                     if (vehicleBlocked) continue;
 
-                    if (vehicle.CanReachVehicle(new LocalTargetInfo(candidate), PathEndMode.OnCell, Danger.Deadly, TraverseMode.NoPassClosedDoors))
+                    if (VehicleReachabilityCache.CanReach(vehicle, candidate, PathEndMode.OnCell))
                         return candidate;
                 }
             }
@@ -1268,7 +1377,7 @@ namespace VehicleRaidFramework
             foreach (var kvp in candidates)
             {
                 if (pathChecks++ >= 6) break;
-                if (vehicle.CanReachVehicle(new LocalTargetInfo(kvp.Key), PathEndMode.OnCell, Danger.Deadly, TraverseMode.NoPassClosedDoors))
+                if (VehicleReachabilityCache.CanReach(vehicle, kvp.Key, PathEndMode.OnCell))
                     return kvp.Key;
             }
 
@@ -1299,7 +1408,7 @@ namespace VehicleRaidFramework
             IntVec3 exitCell;
             if (VehicleTrafficManager.TryFindExitCell(vehicle, out exitCell))
             {
-                if (!vehicle.CanReachVehicle(new LocalTargetInfo(exitCell), PathEndMode.OnCell, Danger.Deadly, TraverseMode.NoPassClosedDoors))
+                if (!VehicleReachabilityCache.CanReach(vehicle, exitCell, PathEndMode.OnCell))
                 {
                     return JobMaker.MakeJob(JobDefOf.Wait_Combat, 300, true);
                 }
@@ -1311,7 +1420,7 @@ namespace VehicleRaidFramework
 
         private Job CreateExitJob(IntVec3 target)
         {
-            Job job = JobMaker.MakeJob(DefDatabase<JobDef>.GetNamed("VRF_VehicleExitMap"), target);
+            Job job = JobMaker.MakeJob(VRF_AIDutyDefs.VehicleExitMap, target);
             job.exitMapOnArrival = true;
             job.locomotionUrgency = LocomotionUrgency.Jog;
             return job;
@@ -1342,8 +1451,9 @@ namespace VehicleRaidFramework
     {
         private IntVec3 holdSpot = IntVec3.Invalid;
 
-        private Dictionary<int, IntVec3> vehicleSlots = new Dictionary<int, IntVec3>();
-        private Dictionary<int, float> airplaneOrbitAngles = new Dictionary<int, float>();
+        private readonly Dictionary<int, IntVec3> vehicleSlots = new Dictionary<int, IntVec3>();
+        private readonly Dictionary<int, float> airplaneOrbitAngles = new Dictionary<int, float>();
+        private readonly List<IntVec3> takenSlotsScratch = new List<IntVec3>();
 
         private const float InfantryDefendRadius = 28f;
         private const float ReturnThreshold      = 12f;
@@ -1372,7 +1482,8 @@ namespace VehicleRaidFramework
                     IntVec3 flag = parentToil.FlagLoc;
                     if (flag.IsValid && flag.InBounds(this.lord.Map))
                     {
-                        Log.Message($"[VRF_Debug] ComputeHoldSpot — using parent FlagLoc={flag} (toil={parentToil.GetType().Name})");
+                        if (VRF_Log.Enabled)
+                            Log.Message($"[VRF_Debug] ComputeHoldSpot — using parent FlagLoc={flag} (toil={parentToil.GetType().Name})");
                         return flag;
                     }
                 }
@@ -1393,7 +1504,8 @@ namespace VehicleRaidFramework
             IntVec3 centroid = count > 0
                 ? new IntVec3((int)(sumX / count), 0, (int)(sumZ / count))
                 : this.lord.ownedPawns[0].Position;
-            Log.Message($"[VRF_Debug] ComputeHoldSpot — using centroid={centroid} (no parent FlagLoc)");
+            if (VRF_Log.Enabled)
+                Log.Message($"[VRF_Debug] ComputeHoldSpot — using centroid={centroid} (no parent FlagLoc)");
             return centroid;
         }
 
@@ -1441,9 +1553,7 @@ namespace VehicleRaidFramework
                     }
                     if (tooClose) continue;
 
-                    if (!vehicle.CanReachVehicle(new LocalTargetInfo(candidate),
-                            PathEndMode.OnCell, Danger.Deadly,
-                            TraverseMode.NoPassClosedDoors)) continue;
+                    if (!VehicleReachabilityCache.CanReach(vehicle, candidate, PathEndMode.OnCell)) continue;
 
                     return candidate;
                 }
@@ -1456,18 +1566,15 @@ namespace VehicleRaidFramework
             if (!holdSpot.IsValid)
                 holdSpot = ComputeHoldSpot();
 
-            Log.Message($"[VRF_Debug] LordToil_VehicleHoldPosition.UpdateAllDuties — lord={this.lord?.faction?.def?.defName} holdSpot={holdSpot} pawnCount={this.lord?.ownedPawns?.Count}");
+            if (VRF_Log.Enabled)
+                Log.Message($"[VRF_Debug] LordToil_VehicleHoldPosition.UpdateAllDuties — lord={this.lord?.faction?.def?.defName} holdSpot={holdSpot} pawnCount={this.lord?.ownedPawns?.Count}");
 
             var vJob = this.lord.LordJob as LordJob_VehicleRaid;
             if (vJob != null) vJob.updatingDuties = true;
 
             try
             {
-                DutyDef vehicleHoldDuty =
-                    VRF_DutyDefOf.VRF_VehicleHoldStrict
-                    ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleHoldStrict", false)
-                    ?? VRF_DutyDefOf.VRF_VehicleDefendBase
-                    ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleDefendBase", false);
+                DutyDef vehicleHoldDuty = VRF_AIDutyDefs.HoldStrict ?? VRF_AIDutyDefs.DefendBase;
 
                 foreach (Pawn pawn in this.lord.ownedPawns)
                 {
@@ -1481,8 +1588,13 @@ namespace VehicleRaidFramework
 
                         if (!vehicleSlots.TryGetValue(v.thingIDNumber, out IntVec3 slot) || !slot.IsValid)
                         {
-                            var takenSlots = new List<IntVec3>(vehicleSlots.Values.Where(s => s.IsValid));
-                            slot = AssignSlot(v, takenSlots);
+                            takenSlotsScratch.Clear();
+                            foreach (IntVec3 occupiedSlot in vehicleSlots.Values)
+                            {
+                                if (occupiedSlot.IsValid)
+                                    takenSlotsScratch.Add(occupiedSlot);
+                            }
+                            slot = AssignSlot(v, takenSlotsScratch);
                             if (!slot.IsValid) slot = holdSpot; 
                             vehicleSlots[v.thingIDNumber] = slot;
                         }
@@ -1492,10 +1604,7 @@ namespace VehicleRaidFramework
 
                         if (isHoverAirborne)
                         {
-                            DutyDef hoverHoldDuty =
-                                VRF_DutyDefOf.VRF_VehicleHoldStrict
-                                ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleHoldStrict", false)
-                                ?? VRF_DutyDefOf.VRF_VehicleDefendBase;
+                            DutyDef hoverHoldDuty = VRF_AIDutyDefs.HoldStrict ?? VRF_AIDutyDefs.DefendBase;
 
                             if (hoverHoldDuty != null &&
                                 (v.mindState.duty?.def != hoverHoldDuty ||
@@ -1515,7 +1624,8 @@ namespace VehicleRaidFramework
                                     airplaneOrbitAngles[v.thingIDNumber] = hoverComp.currentFlyAngle;
                                 }
 
-                                Log.Message($"[VRF_Debug]   Assigning hover hold duty '{hoverHoldDuty.defName}' slot={slot} isAirplane={isAirplane} to {v.LabelShort}");
+                                if (VRF_Log.Enabled)
+                                    Log.Message($"[VRF_Debug]   Assigning hover hold duty '{hoverHoldDuty.defName}' slot={slot} isAirplane={isAirplane} to {v.LabelShort}");
                             }
                         }
                         else if (vehicleHoldDuty != null &&
@@ -1525,28 +1635,29 @@ namespace VehicleRaidFramework
                             var duty = new PawnDuty(vehicleHoldDuty, new LocalTargetInfo(slot));
                             duty.radius = 8f;
                             v.mindState.duty = duty;
-                            Log.Message($"[VRF_Debug]   Assigning hold duty '{vehicleHoldDuty.defName}' slot={slot} to {v.LabelShort}");
+                            if (VRF_Log.Enabled)
+                                Log.Message($"[VRF_Debug]   Assigning hold duty '{vehicleHoldDuty.defName}' slot={slot} to {v.LabelShort}");
 
                             if (slot.IsValid && CrewManager.CanMove(v) &&
                                 v.Position.DistanceTo(slot) > 8f)
                             {
                                 IntVec3 dest = VehicleRaidUtility.FixDestination(v, slot);
-                                if (dest.IsValid && v.CanReachVehicle(
-                                        new LocalTargetInfo(dest), PathEndMode.OnCell,
-                                        Danger.Deadly, TraverseMode.NoPassClosedDoors))
+                                if (dest.IsValid && VehicleReachabilityCache.CanReach(v, dest, PathEndMode.OnCell))
                                 {
                                     Job moveJob = JobMaker.MakeJob(JobDefOf.Goto, dest);
                                     moveJob.expiryInterval = 3000;
                                     moveJob.checkOverrideOnExpire = true;
                                     v.jobs?.StartJob(moveJob, JobCondition.InterruptForced,
                                         null, resumeCurJobAfterwards: false, cancelBusyStances: true);
-                                    Log.Message($"[VRF_Debug]   → Moving {v.LabelShort} to slot={dest}");
+                                    if (VRF_Log.Enabled)
+                                        Log.Message($"[VRF_Debug]   → Moving {v.LabelShort} to slot={dest}");
                                 }
                             }
                         }
                         else
                         {
-                            Log.Message($"[VRF_Debug]   {v.LabelShort} OK at slot={slot} duty={v.mindState?.duty?.def?.defName} job={v.CurJobDef?.defName}");
+                            if (VRF_Log.Enabled)
+                                Log.Message($"[VRF_Debug]   {v.LabelShort} OK at slot={slot} duty={v.mindState?.duty?.def?.defName} job={v.CurJobDef?.defName}");
                         }
                     }
                     else
@@ -1572,6 +1683,7 @@ namespace VehicleRaidFramework
         {
             base.Notify_PawnLost(p, condition);
             vehicleSlots.Remove(p.thingIDNumber);
+            airplaneOrbitAngles.Remove(p.thingIDNumber);
             var vJob = this.lord.LordJob as LordJob_VehicleRaid;
             if (p is VehiclePawn && !(vJob?.updatingDuties ?? false))
                 UpdateAllDuties();
@@ -1640,7 +1752,8 @@ namespace VehicleRaidFramework
             if (vJob?.naturalRaidLord == null)
             {
                 if (tick % 600 == 0)
-                    Log.Message($"[VRF_Debug] HoldTick — naturalRaidLord is NULL, ticksInToil={tick}");
+                    if (VRF_Log.Enabled)
+                        Log.Message($"[VRF_Debug] HoldTick — naturalRaidLord is NULL, ticksInToil={tick}");
                 return;
             }
 
@@ -1648,7 +1761,8 @@ namespace VehicleRaidFramework
             string toilName = parentToil?.GetType().Name ?? "NULL";
 
             if (tick % 600 == 0)
-                Log.Message($"[VRF_Debug] HoldTick — ticksInToil={tick} parentLord={vJob.naturalRaidLord.LordJob?.GetType().Name} parentToil={toilName}");
+                if (VRF_Log.Enabled)
+                    Log.Message($"[VRF_Debug] HoldTick — ticksInToil={tick} parentLord={vJob.naturalRaidLord.LordJob?.GetType().Name} parentToil={toilName}");
 
             if (parentToil == null) return;
 
@@ -1663,7 +1777,8 @@ namespace VehicleRaidFramework
 
             if (parentIsAssaulting)
             {
-                Log.Message($"[VRF_Debug] HoldTick — parent is assaulting ({toilName}), sending VRF_ParentAssaulting memo");
+                if (VRF_Log.Enabled)
+                    Log.Message($"[VRF_Debug] HoldTick — parent is assaulting ({toilName}), sending VRF_ParentAssaulting memo");
                 this.lord.ReceiveMemo("VRF_ParentAssaulting");
                 return;
             }
@@ -1693,7 +1808,8 @@ namespace VehicleRaidFramework
                         if (dist > 4f)
                         {
                             hoverComp.SetTarget(target.ToVector3Shifted());
-                            Log.Message($"[VRF_Debug] HoldTick — redirecting hover {v.LabelShort} back to slot={target} (dist={dist:F1})");
+                            if (VRF_Log.Enabled)
+                                Log.Message($"[VRF_Debug] HoldTick — redirecting hover {v.LabelShort} back to slot={target} (dist={dist:F1})");
                         }
                     }
                 }
@@ -1715,14 +1831,14 @@ namespace VehicleRaidFramework
                             v.mindState.duty = new PawnDuty(v.mindState.duty.def,
                                 new LocalTargetInfo(snapped)) { radius = 8f };
 
-                        Log.Message($"[VRF_Debug] HoldTick — {v.LabelShort} could not reach slot={target}, snapping to pos={snapped}");
+                        if (VRF_Log.Enabled)
+                            Log.Message($"[VRF_Debug] HoldTick — {v.LabelShort} could not reach slot={target}, snapping to pos={snapped}");
                         continue;
                     }
 
                     IntVec3 dest = VehicleRaidUtility.FixDestination(v, target);
                     if (!dest.IsValid) continue;
-                    if (!v.CanReachVehicle(new LocalTargetInfo(dest), PathEndMode.OnCell,
-                            Danger.Deadly, TraverseMode.NoPassClosedDoors)) continue;
+                    if (!VehicleReachabilityCache.CanReach(v, dest, PathEndMode.OnCell)) continue;
 
                     Job returnJob = JobMaker.MakeJob(JobDefOf.Goto, dest);
                     returnJob.expiryInterval = 3000;
