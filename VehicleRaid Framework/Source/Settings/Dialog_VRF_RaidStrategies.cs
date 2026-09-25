@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using RimWorld;
@@ -8,7 +9,8 @@ namespace VehicleRaidFramework
 {
     public class Dialog_VRF_RaidStrategies : Window
     {
-        private readonly VRF_NaturalRaidVehicleEntry _entry;
+        private readonly List<string> _allowedStrategies;
+        private readonly Action _onChanged;
         private readonly string _vehicleLabel;
 
         private readonly List<(string modName, List<(string defName, string label)> defs)> _groups;
@@ -21,9 +23,20 @@ namespace VehicleRaidFramework
         public override Vector2 InitialSize => new Vector2(500f, 560f);
 
         public Dialog_VRF_RaidStrategies(VRF_NaturalRaidVehicleEntry entry, string vehicleLabel)
+            : this(entry.allowedRaidStrategies, vehicleLabel, () => VRF_Mod.Instance.WriteSettings())
         {
-            _entry        = entry;
-            _vehicleLabel = vehicleLabel;
+        }
+
+        public Dialog_VRF_RaidStrategies(VRF_GravshipRaidEntry gravEntry, string label)
+            : this(gravEntry.allowedRaidStrategies, label, () => VRF_Mod.Instance.WriteSettings())
+        {
+        }
+
+        public Dialog_VRF_RaidStrategies(List<string> allowedStrategies, string vehicleLabel, Action onChanged)
+        {
+            _allowedStrategies = allowedStrategies ?? new List<string>();
+            _onChanged         = onChanged;
+            _vehicleLabel      = vehicleLabel;
             doCloseButton = true;
             doCloseX      = true;
             absorbInputAroundWindow = false;
@@ -72,16 +85,16 @@ namespace VehicleRaidFramework
             float btnW = (inRect.width - Pad) * 0.5f;
             if (Widgets.ButtonText(new Rect(inRect.x, y, btnW, 26f), "VRF_StrategyDialog_AllOn".Translate()))
             {
-                _entry.allowedRaidStrategies.Clear();
-                VRF_Mod.Instance.WriteSettings();
+                _allowedStrategies.Clear();
+                _onChanged?.Invoke();
             }
             if (Widgets.ButtonText(new Rect(inRect.x + btnW + Pad, y, btnW, 26f), "VRF_StrategyDialog_AllOff".Translate()))
             {
-                _entry.allowedRaidStrategies.Clear();
+                _allowedStrategies.Clear();
                 foreach (var (_, defs) in _groups)
                     foreach (var (defName, _) in defs)
-                        _entry.allowedRaidStrategies.Add(defName);
-                VRF_Mod.Instance.WriteSettings();
+                        _allowedStrategies.Add(defName);
+                _onChanged?.Invoke();
             }
             y += 32f;
 
@@ -109,8 +122,8 @@ namespace VehicleRaidFramework
 
                 foreach (var (defName, label) in defs)
                 {
-                    bool isAllowed = _entry.allowedRaidStrategies.Count == 0
-                                  || !_entry.allowedRaidStrategies.Contains(defName);
+                    bool isAllowed = _allowedStrategies.Count == 0
+                                  || !_allowedStrategies.Contains(defName);
 
                     Rect row = new Rect(0f, vy, viewRect.width, RowH - 2f);
                     Widgets.DrawHighlightIfMouseover(row);
@@ -127,14 +140,14 @@ namespace VehicleRaidFramework
                     {
                         if (isAllowed)
                         {
-                            _entry.allowedRaidStrategies.Remove(defName);
+                            _allowedStrategies.Remove(defName);
                         }
                         else
                         {
-                            if (!_entry.allowedRaidStrategies.Contains(defName))
-                                _entry.allowedRaidStrategies.Add(defName);
+                            if (!_allowedStrategies.Contains(defName))
+                                _allowedStrategies.Add(defName);
                         }
-                        VRF_Mod.Instance.WriteSettings();
+                        _onChanged?.Invoke();
                     }
 
                     vy += RowH;

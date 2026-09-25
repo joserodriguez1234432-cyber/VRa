@@ -57,6 +57,10 @@ namespace VehicleRaidFramework
             var enabledEntries = factionConfig.vehicleEntries.Where(e => e.enabled).ToList();
             if (enabledEntries.Count == 0) return;
 
+            float raidChance = Mathf.Clamp01(VRF_Mod.Settings?.VehicleRaidChance ?? 1.0f);
+            if (raidChance < 1.0f && (raidChance <= 0f || !Rand.Chance(raidChance)))
+                return;
+
             bool isDropArrival = IsDropPodArrival(parms);
             if (isDropArrival && (VRF_Mod.Settings != null && !VRF_Mod.Settings.allowGlobalDropPodRaids))
                 return;

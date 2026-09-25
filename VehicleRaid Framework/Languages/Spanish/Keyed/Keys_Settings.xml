@@ -28,6 +28,8 @@
   <VRF_Settings_GlobalStrategyBtn>Estrategias de raid permitidas</VRF_Settings_GlobalStrategyBtn>
   <VRF_Settings_Tip_GlobalStrategy>Controla qué estrategias de raid pueden generar vehículos de forma global. Si una estrategia está desmarcada aquí, ningún vehículo será inyectado en ese tipo de raid, independientemente de los ajustes por vehículo. Los filtros por vehículo se aplican encima de este como restricción adicional.</VRF_Settings_Tip_GlobalStrategy>
   <VRF_Settings_GlobalStrategyHint>Las estrategias desmarcadas bloquean todos los vehículos en ese tipo de raid.</VRF_Settings_GlobalStrategyHint>
+  <VRF_Settings_VehicleRaidChanceTitle>Probabilidad de que una raid tenga vehículos</VRF_Settings_VehicleRaidChanceTitle>
+  <VRF_Settings_Tip_VehicleRaidChance>Probabilidad (0% a 100%) de que una raid enemiga natural incluya vehículos. Al 100%, todas las raids elegibles intentarán generar vehículos. Al 0%, ninguna raid natural tendrá vehículos.</VRF_Settings_Tip_VehicleRaidChance>
   <VRF_Settings_VehiclePointsFractionTitle>% de los puntos de la raid que van para los vehículos</VRF_Settings_VehiclePointsFractionTitle>
   <VRF_Settings_AutoFillAmmoFractionTitle>% de capacidad de carga rellenada con munición (Auto-asignar)</VRF_Settings_AutoFillAmmoFractionTitle>
   <VRF_StrategyDialog_Title>Estrategias de raid — {0}</VRF_StrategyDialog_Title>

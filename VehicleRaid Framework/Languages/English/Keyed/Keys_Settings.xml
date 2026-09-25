@@ -28,6 +28,8 @@
   <VRF_Settings_GlobalStrategyBtn>Allowed raid strategies</VRF_Settings_GlobalStrategyBtn>
   <VRF_Settings_Tip_GlobalStrategy>Controls which raid strategies can spawn vehicles globally. If a strategy is unchecked here, no vehicle will be injected into that type of raid, regardless of per-vehicle settings. Per-vehicle strategy filters apply on top of this as an additional restriction.</VRF_Settings_Tip_GlobalStrategy>
   <VRF_Settings_GlobalStrategyHint>Unchecked strategies block all vehicles from spawning in that raid type.</VRF_Settings_GlobalStrategyHint>
+  <VRF_Settings_VehicleRaidChanceTitle>% chance of vehicle raid</VRF_Settings_VehicleRaidChanceTitle>
+  <VRF_Settings_Tip_VehicleRaidChance>Percentage chance (0% to 100%) that a natural enemy raid will include vehicles. At 100%, all eligible raids attempt to spawn vehicles. At 0%, no natural raids will include vehicles.</VRF_Settings_Tip_VehicleRaidChance>
   <VRF_Settings_VehiclePointsFractionTitle>% of raid points assigned to vehicles</VRF_Settings_VehiclePointsFractionTitle>
   <VRF_Settings_AutoFillAmmoFractionTitle>% of cargo capacity filled with ammo (Auto-fill)</VRF_Settings_AutoFillAmmoFractionTitle>
   <VRF_StrategyDialog_Title>Raid strategies — {0}</VRF_StrategyDialog_Title>

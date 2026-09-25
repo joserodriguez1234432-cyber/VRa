@@ -27,6 +27,8 @@ namespace VehicleRaidFramework
         private static Vector2 _detailScrollPos;
         private static Vector2 _presetScrollPos;
         private static Vector2 _hoverScrollPos;
+        private static Vector2 _configScrollPos;
+        private static float   _configTabHeight = 1100f;
 
         private static bool   _showPresetPanel  = false;
         private static string _exportFileName   = "MyPreset";
@@ -1716,14 +1718,20 @@ namespace VehicleRaidFramework
 
         private static void DrawConfigTab(Rect rect)
         {
-            float y = rect.y;
+            float viewW = rect.width - 20f;
+            Rect viewRect = new Rect(0f, 0f, viewW, Mathf.Max(_configTabHeight, rect.height));
+
+            Widgets.BeginScrollView(rect, ref _configScrollPos, viewRect);
+
+            float x = 0f;
+            float y = 0f;
 
             Text.Font = GameFont.Medium;
             {
                 string title  = "VRF_Settings_GlobalStrategyTitle".Translate();
                 float  titleW = Text.CalcSize(title).x + 4f;
-                Widgets.Label(new Rect(rect.x, y, titleW, 32f), title);
-                Rect titleTip = new Rect(rect.x + titleW + 2f, y + 7f, 22f, 22f);
+                Widgets.Label(new Rect(x, y, titleW, 32f), title);
+                Rect titleTip = new Rect(x + titleW + 2f, y + 7f, 22f, 22f);
                 GUI.color = Color.yellow;
                 Text.Font = GameFont.Small;
                 Widgets.Label(titleTip, "?");
@@ -1740,40 +1748,80 @@ namespace VehicleRaidFramework
             int allowedCount  = totalStrats - excludedCount;
             string btnLabel   = "VRF_Settings_GlobalStrategyBtn".Translate() +
                                 $" ({allowedCount}/{totalStrats})";
-            if (Widgets.ButtonText(new Rect(rect.x, y, 260f, 28f), btnLabel))
+            if (Widgets.ButtonText(new Rect(x, y, 260f, 28f), btnLabel))
                 Find.WindowStack.Add(new Dialog_VRF_GlobalRaidStrategies());
             y += 36f;
 
             // Configuración de Propulsores de Gravship
             y += 8f;
             GUI.color = new Color(0.7f, 0.9f, 1f);
-            Widgets.Label(new Rect(rect.x, y, rect.width, 22f), "VRF_ThrusterConfig_Title".Translate());
+            Widgets.Label(new Rect(x, y, viewW, 22f), "VRF_ThrusterConfig_Title".Translate());
             GUI.color = Color.white;
             y += 24f;
-            if (Widgets.ButtonText(new Rect(rect.x, y, 280f, 28f), "VRF_ThrusterConfig_OpenButton".Translate()))
+            if (Widgets.ButtonText(new Rect(x, y, 280f, 28f), "VRF_ThrusterConfig_OpenButton".Translate()))
             {
                 Find.WindowStack.Add(new VehicleMapFramework.Dialog_VRF_ThrusterConfig());
             }
             y += 34f;
 
-            Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
+            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
             y += 14f;
 
+            // Probabilidad de raid con vehículos
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(rect.x, y, rect.width, 32f), "VRF_Settings_VehiclePointsFractionTitle".Translate());
+            {
+                string title  = "VRF_Settings_VehicleRaidChanceTitle".Translate();
+                float  titleW = Text.CalcSize(title).x + 4f;
+                Widgets.Label(new Rect(x, y, titleW, 32f), title);
+                Rect titleTip = new Rect(x + titleW + 2f, y + 7f, 22f, 22f);
+                GUI.color = Color.yellow;
+                Text.Font = GameFont.Small;
+                Widgets.Label(titleTip, "?");
+                Text.Font = GameFont.Medium;
+                GUI.color = Color.white;
+                if (Mouse.IsOver(titleTip))
+                    TooltipHandler.TipRegion(titleTip, "VRF_Settings_Tip_VehicleRaidChance".Translate());
+            }
             y += 36f;
             Text.Font = GameFont.Small;
 
             {
-                float sliderW = Mathf.Min(rect.width * 0.5f, 360f);
+                float sliderW = Mathf.Min(viewW * 0.5f, 360f);
+                float prevChance = VRF_Mod.Settings.VehicleRaidChance;
+                float newChance = Widgets.HorizontalSlider(
+                    new Rect(x, y + 4f, sliderW, 20f),
+                    prevChance, 0f, 1f, true);
+                newChance = Mathf.Round(newChance * 100f) / 100f;
+                string pctLabel = (newChance * 100f).ToString("F0") + " %";
+                Text.Anchor = TextAnchor.MiddleLeft;
+                Widgets.Label(new Rect(x + sliderW + 10f, y, 60f, 28f), pctLabel);
+                Text.Anchor = TextAnchor.UpperLeft;
+                if (Mathf.Abs(newChance - prevChance) > 0.001f)
+                {
+                    VRF_Mod.Settings.VehicleRaidChance = newChance;
+                    VRF_Mod.Instance.WriteSettings();
+                }
+            }
+            y += 34f;
+
+            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
+            y += 14f;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(x, y, viewW, 32f), "VRF_Settings_VehiclePointsFractionTitle".Translate());
+            y += 36f;
+            Text.Font = GameFont.Small;
+
+            {
+                float sliderW = Mathf.Min(viewW * 0.5f, 360f);
                 float prevFrac = VRF_Mod.Settings.VehiclePointsFraction;
                 float newFrac = Widgets.HorizontalSlider(
-                    new Rect(rect.x, y + 4f, sliderW, 20f),
+                    new Rect(x, y + 4f, sliderW, 20f),
                     prevFrac, 0f, 1f, true);
                 newFrac = Mathf.Round(newFrac * 100f) / 100f;
                 string pctLabel = (newFrac * 100f).ToString("F0") + " %";
                 Text.Anchor = TextAnchor.MiddleLeft;
-                Widgets.Label(new Rect(rect.x + sliderW + 10f, y, 60f, 28f), pctLabel);
+                Widgets.Label(new Rect(x + sliderW + 10f, y, 60f, 28f), pctLabel);
                 Text.Anchor = TextAnchor.UpperLeft;
                 if (Mathf.Abs(newFrac - prevFrac) > 0.001f)
                 {
@@ -1783,24 +1831,24 @@ namespace VehicleRaidFramework
             }
             y += 34f;
 
-            Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
+            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
             y += 14f;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(rect.x, y, rect.width, 32f), "VRF_Settings_AutoFillAmmoFractionTitle".Translate());
+            Widgets.Label(new Rect(x, y, viewW, 32f), "VRF_Settings_AutoFillAmmoFractionTitle".Translate());
             y += 36f;
             Text.Font = GameFont.Small;
 
             {
-                float sliderW = Mathf.Min(rect.width * 0.5f, 360f);
+                float sliderW = Mathf.Min(viewW * 0.5f, 360f);
                 float prevFrac = VRF_Mod.Settings.AutoFillAmmoFraction;
                 float newFrac = Widgets.HorizontalSlider(
-                    new Rect(rect.x, y + 4f, sliderW, 20f),
+                    new Rect(x, y + 4f, sliderW, 20f),
                     prevFrac, 0f, 1f, true);
                 newFrac = Mathf.Round(newFrac * 100f) / 100f;
                 string pctLabel = (newFrac * 100f).ToString("F0") + " %";
                 Text.Anchor = TextAnchor.MiddleLeft;
-                Widgets.Label(new Rect(rect.x + sliderW + 10f, y, 60f, 28f), pctLabel);
+                Widgets.Label(new Rect(x + sliderW + 10f, y, 60f, 28f), pctLabel);
                 Text.Anchor = TextAnchor.UpperLeft;
                 if (Mathf.Abs(newFrac - prevFrac) > 0.001f)
                 {
@@ -1810,15 +1858,15 @@ namespace VehicleRaidFramework
             }
             y += 34f;
 
-            Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
+            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
             y += 14f;
 
             Text.Font = GameFont.Medium;
             {
                 string title  = "VRF_Settings_EstimatorTitle".Translate();
                 float  titleW = Text.CalcSize(title).x + 4f;
-                Widgets.Label(new Rect(rect.x, y, titleW, 32f), title);
-                Rect titleTip = new Rect(rect.x + titleW + 2f, y + 7f, 22f, 22f);
+                Widgets.Label(new Rect(x, y, titleW, 32f), title);
+                Rect titleTip = new Rect(x + titleW + 2f, y + 7f, 22f, 22f);
                 GUI.color = Color.yellow;
                 Text.Font = GameFont.Small;
                 Widgets.Label(titleTip, "?");
@@ -1834,18 +1882,18 @@ namespace VehicleRaidFramework
             float fieldW = 100f;
             float rowH = 28f;
 
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightHP".Translate(), ref VRF_Mod.Settings.WeightHP, "WeightHP");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightArmor".Translate(), ref VRF_Mod.Settings.WeightArmor, "WeightArmor");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightDPS".Translate(), ref VRF_Mod.Settings.WeightDPS, "WeightDPS");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightRange".Translate(), ref VRF_Mod.Settings.WeightRange, "WeightRange");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightSpeed".Translate(), ref VRF_Mod.Settings.WeightSpeed, "WeightSpeed");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightDrivers".Translate(), ref VRF_Mod.Settings.WeightDrivers, "WeightDrivers");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightGunners".Translate(), ref VRF_Mod.Settings.WeightGunners, "WeightGunners");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightPassengers".Translate(), ref VRF_Mod.Settings.WeightPassengers, "WeightPassengers");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightSize".Translate(), ref VRF_Mod.Settings.WeightSize, "WeightSize");
-            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_AirMultiplier".Translate(), ref VRF_Mod.Settings.AirMultiplier, "AirMultiplier");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightHP".Translate(), ref VRF_Mod.Settings.WeightHP, "WeightHP");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightArmor".Translate(), ref VRF_Mod.Settings.WeightArmor, "WeightArmor");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightDPS".Translate(), ref VRF_Mod.Settings.WeightDPS, "WeightDPS");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightRange".Translate(), ref VRF_Mod.Settings.WeightRange, "WeightRange");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightSpeed".Translate(), ref VRF_Mod.Settings.WeightSpeed, "WeightSpeed");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightDrivers".Translate(), ref VRF_Mod.Settings.WeightDrivers, "WeightDrivers");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightGunners".Translate(), ref VRF_Mod.Settings.WeightGunners, "WeightGunners");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightPassengers".Translate(), ref VRF_Mod.Settings.WeightPassengers, "WeightPassengers");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightSize".Translate(), ref VRF_Mod.Settings.WeightSize, "WeightSize");
+            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_AirMultiplier".Translate(), ref VRF_Mod.Settings.AirMultiplier, "AirMultiplier");
             {
-                Rect airTip = new Rect(rect.x + labelW + fieldW + 6f, y - rowH + (rowH - 18f) * 0.5f, 18f, 18f);
+                Rect airTip = new Rect(x + labelW + fieldW + 6f, y - rowH + (rowH - 18f) * 0.5f, 18f, 18f);
                 GUI.color = Color.yellow;
                 Widgets.Label(airTip, "?");
                 GUI.color = Color.white;
@@ -1855,38 +1903,38 @@ namespace VehicleRaidFramework
 
             y += 10f;
             bool prevTransport = VRF_Mod.Settings.AutoFillTransportVehicles;
-            Widgets.CheckboxLabeled(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_AutoFillTransport".Translate(), ref VRF_Mod.Settings.AutoFillTransportVehicles);
+            Widgets.CheckboxLabeled(new Rect(x, y, 400f, 24f), "VRF_Settings_AutoFillTransport".Translate(), ref VRF_Mod.Settings.AutoFillTransportVehicles);
             if (prevTransport != VRF_Mod.Settings.AutoFillTransportVehicles) VRF_Mod.Instance.WriteSettings();
             y += 30f;
 
             bool prevSiegeDrop = VRF_Mod.Settings.AutoFillSiegeDropVehicles;
-            Widgets.CheckboxLabeled(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_AutoFillSiegeDrop".Translate(), ref VRF_Mod.Settings.AutoFillSiegeDropVehicles);
+            Widgets.CheckboxLabeled(new Rect(x, y, 400f, 24f), "VRF_Settings_AutoFillSiegeDrop".Translate(), ref VRF_Mod.Settings.AutoFillSiegeDropVehicles);
             if (prevSiegeDrop != VRF_Mod.Settings.AutoFillSiegeDropVehicles) VRF_Mod.Instance.WriteSettings();
-            if (Mouse.IsOver(new Rect(rect.x, y, 400f, 24f)))
-                TooltipHandler.TipRegion(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_AutoFillSiegeDropDesc".Translate());
+            if (Mouse.IsOver(new Rect(x, y, 400f, 24f)))
+                TooltipHandler.TipRegion(new Rect(x, y, 400f, 24f), "VRF_Settings_AutoFillSiegeDropDesc".Translate());
             y += 30f;
 
             bool prevDropOnly = VRF_Mod.Settings.SiegeDropOnlyOnDropRaids;
-            Widgets.CheckboxLabeled(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_SiegeDropOnly".Translate(), ref VRF_Mod.Settings.SiegeDropOnlyOnDropRaids);
+            Widgets.CheckboxLabeled(new Rect(x, y, 400f, 24f), "VRF_Settings_SiegeDropOnly".Translate(), ref VRF_Mod.Settings.SiegeDropOnlyOnDropRaids);
             if (prevDropOnly != VRF_Mod.Settings.SiegeDropOnlyOnDropRaids) VRF_Mod.Instance.WriteSettings();
-            if (Mouse.IsOver(new Rect(rect.x, y, 400f, 24f)))
-                TooltipHandler.TipRegion(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_SiegeDropOnlyDesc".Translate());
+            if (Mouse.IsOver(new Rect(x, y, 400f, 24f)))
+                TooltipHandler.TipRegion(new Rect(x, y, 400f, 24f), "VRF_Settings_SiegeDropOnlyDesc".Translate());
             y += 30f;
 
-            Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
+            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
             y += 14f;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(rect.x, y, rect.width, 30f), "Developer / Debug");
+            Widgets.Label(new Rect(x, y, viewW, 30f), "Developer / Debug");
             y += 34f;
             Text.Font = GameFont.Small;
 
             bool prevVerbose = VRF_Mod.Settings.VerboseAILogging;
-            Widgets.CheckboxLabeled(new Rect(rect.x, y, 500f, 24f),
+            Widgets.CheckboxLabeled(new Rect(x, y, 500f, 24f),
                 "Verbose NPC vehicle AI logging",
                 ref VRF_Mod.Settings.VerboseAILogging);
-            if (Mouse.IsOver(new Rect(rect.x, y, 500f, 24f)))
-                TooltipHandler.TipRegion(new Rect(rect.x, y, 500f, 24f),
+            if (Mouse.IsOver(new Rect(x, y, 500f, 24f)))
+                TooltipHandler.TipRegion(new Rect(x, y, 500f, 24f),
                     "When enabled, detailed diagnostics are written to the log for every VRF NPC vehicle event: " +
                     "job given, job started/ended, duty change, lord transition, power-state change, " +
                     "enemy-target acquisition, periodic full state dump, and more. " +
@@ -1895,19 +1943,23 @@ namespace VehicleRaidFramework
                 VRF_Mod.Instance.WriteSettings();
             y += 30f;
 
-            if (Widgets.ButtonText(new Rect(rect.x, y, 120f, 30f), "VRF_Settings_Save".Translate()))
+            if (Widgets.ButtonText(new Rect(x, y, 120f, 30f), "VRF_Settings_Save".Translate()))
             {
                 VRF_Mod.Instance.WriteSettings();
                 Messages.Message("VRF_Settings_Saved".Translate(), MessageTypeDefOf.PositiveEvent, false);
             }
 
-            if (Widgets.ButtonText(new Rect(rect.x + 130f, y, 120f, 30f), "VRF_Settings_Reset".Translate()))
+            if (Widgets.ButtonText(new Rect(x + 130f, y, 120f, 30f), "VRF_Settings_Reset".Translate()))
             {
                 VRF_Mod.Settings.ResetEstimatorSettings();
                 _configBufs.Clear();
                 VRF_Mod.Instance.WriteSettings();
                 Messages.Message("VRF_Settings_ResetMsg".Translate(), MessageTypeDefOf.NeutralEvent, false);
             }
+            y += 36f;
+
+            _configTabHeight = y + 20f;
+            Widgets.EndScrollView();
         }
 
         private static void DrawConfigField(float x, ref float y, float labelW, float fieldW, float rowH, string label, ref float val, string key)
