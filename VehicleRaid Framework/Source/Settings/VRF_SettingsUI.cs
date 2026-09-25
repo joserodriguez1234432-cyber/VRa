@@ -25,10 +25,17 @@ namespace VehicleRaidFramework
         private static Vector2 _factionScrollPos;
         private static Vector2 _vehicleScrollPos;
         private static Vector2 _detailScrollPos;
+        private class CachedPresetInfo
+        {
+            public DateTime lastWrite;
+            public VehicleMapFramework.VRF_GravshipPresetData data;
+        }
+        private static readonly Dictionary<string, CachedPresetInfo> _cachedPresetData = new Dictionary<string, CachedPresetInfo>();
+        private static readonly Dictionary<string, Texture2D> _cachedPresetTextures = new Dictionary<string, Texture2D>();
+        private static Vector2 _gravshipListScrollPos = Vector2.zero;
+
         private static Vector2 _presetScrollPos;
         private static Vector2 _hoverScrollPos;
-        private static Vector2 _configScrollPos;
-        private static float   _configTabHeight = 1100f;
 
         private static bool   _showPresetPanel  = false;
         private static string _exportFileName   = "MyPreset";
@@ -457,6 +464,25 @@ namespace VehicleRaidFramework
             Widgets.EndScrollView();
         }
 
+                public static bool IsGravship(VehicleDef vDef, PawnKindDef kind = null)
+        {
+            if (vDef != null)
+            {
+                if (vDef.defName.IndexOf("grav", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+                if (vDef.thingClass != null && vDef.thingClass.FullName != null && vDef.thingClass.FullName.Contains("VehiclePawnWithMap"))
+                    return true;
+            }
+            if (kind != null)
+            {
+                if (kind.defName.IndexOf("grav", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+                if (kind.race is VehicleDef vd && vd.thingClass != null && vd.thingClass.FullName != null && vd.thingClass.FullName.Contains("VehiclePawnWithMap"))
+                    return true;
+            }
+            return false;
+        }
+
         private static void DrawVehicleDetail(Rect rect, VRF_SpawnContext ctx)
         {
             if (_selectedVehicleKind == null) { _page = VRF_SettingsPage.VehicleList; return; }
@@ -466,6 +492,8 @@ namespace VehicleRaidFramework
             VehicleDef  vDef = kind.race as VehicleDef;
             var factionConfig = VRF_Mod.Settings.GetOrCreateFactionConfig(_selectedFaction.defName);
             var entry         = factionConfig.GetOrCreateForContext(kind.defName, ctx);
+
+            bool isGrav = IsGravship(vDef, kind);
 
             if (entry.combatPowerOverride <= 0f) entry.combatPowerOverride = kind.combatPower;
             if (entry.minRaidPoints       <= 0f) entry.minRaidPoints       = entry.combatPowerOverride;
@@ -547,99 +575,84 @@ namespace VehicleRaidFramework
                 iy += 28f;
             }
 
-            if (VehicleMapFramework.VRF_GravshipPresetUtility.IsVMFActive && (vDef != null || kind.defName.Contains("Gravship")))
+            // If NOT gravship, draw combat power and min/max points fields
+            if (!isGrav)
             {
-                iy += 4f;
-                string gravPresetLabel = string.IsNullOrEmpty(entry.gravshipPresetName)
-                    ? "Estructura Gravship: Ninguna (Por defecto)"
-                    : $"Estructura Gravship: {entry.gravshipPresetName}";
-
-                if (Widgets.ButtonText(new Rect(localInfoX, iy, localInfoW, 26f), gravPresetLabel))
+                iy += 6f;
+                Widgets.Label(new Rect(localInfoX, iy, localInfoW, 22f), "VRF_Settings_CombatPower".Translate());
+                iy += 22f;
                 {
-                    List<FloatMenuOption> options = new List<FloatMenuOption>();
-                    options.Add(new FloatMenuOption("Ninguna (Por defecto)", () =>
-                    {
-                        entry.gravshipPresetName = null;
-                        VRF_Mod.Instance.WriteSettings();
-                    }));
-
-                    var presetFiles = VehicleMapFramework.VRF_GravshipPresetUtility.FindAllGravshipPresetFiles();
-                    foreach (var file in presetFiles)
-                    {
-                        string pName = System.IO.Path.GetFileNameWithoutExtension(file);
-                        options.Add(new FloatMenuOption(pName, () =>
-                        {
-                            entry.gravshipPresetName = pName;
-                            VRF_Mod.Instance.WriteSettings();
-                        }));
-                    }
-                    Find.WindowStack.Add(new FloatMenu(options));
+                    float cpFieldW = Mathf.Min(localInfoW, 120f);
+                    float prevCp = entry.combatPowerOverride;
+                    Widgets.TextFieldNumeric(new Rect(localInfoX, iy, cpFieldW, 24f), ref entry.combatPowerOverride, ref cpBuf, 1f, 999999f);
+                    _cpBuffers[bufKey] = cpBuf;
+                    if (entry.combatPowerOverride != prevCp) VRF_Mod.Instance.WriteSettings();
+                    Rect cpTipRect = new Rect(localInfoX + cpFieldW + 6f, iy + 3f, 18f, 18f);
+                    GUI.color = Color.yellow;
+                    Widgets.Label(cpTipRect, "?");
+                    GUI.color = Color.white;
+                    if (Mouse.IsOver(cpTipRect))
+                        TooltipHandler.TipRegion(cpTipRect, "VRF_Settings_Tip_CombatPower".Translate());
                 }
                 iy += 30f;
-            }
 
-            iy += 6f;
-            Widgets.Label(new Rect(localInfoX, iy, localInfoW, 22f), "VRF_Settings_CombatPower".Translate());
-            iy += 22f;
-            {
-                float cpFieldW = Mathf.Min(localInfoW, 120f);
-                float prevCp = entry.combatPowerOverride;
-                Widgets.TextFieldNumeric(new Rect(localInfoX, iy, cpFieldW, 24f), ref entry.combatPowerOverride, ref cpBuf, 1f, 999999f);
-                _cpBuffers[bufKey] = cpBuf;
-                if (entry.combatPowerOverride != prevCp) VRF_Mod.Instance.WriteSettings();
-                Rect cpTipRect = new Rect(localInfoX + cpFieldW + 6f, iy + 3f, 18f, 18f);
-                GUI.color = Color.yellow;
-                Widgets.Label(cpTipRect, "?");
-                GUI.color = Color.white;
-                if (Mouse.IsOver(cpTipRect))
-                    TooltipHandler.TipRegion(cpTipRect, "VRF_Settings_Tip_CombatPower".Translate());
-            }
-            iy += 30f;
+                const float QMarkW  = 24f;
+                const float ColGap  = 20f;
+                float colW  = (localInfoW - ColGap) * 0.5f;
+                float fieldW = Mathf.Min(colW - QMarkW - 4f, 100f);
+                float mxpX   = localInfoX + colW + ColGap;
 
-            const float QMarkW  = 24f;
-            const float ColGap  = 20f;
-            float colW  = (localInfoW - ColGap) * 0.5f;
-            float fieldW = Mathf.Min(colW - QMarkW - 4f, 100f);
-            float mxpX   = localInfoX + colW + ColGap;
+                Widgets.Label(new Rect(localInfoX, iy, colW, 22f), "VRF_Settings_MinCombatPoints".Translate());
+                Widgets.Label(new Rect(mxpX,       iy, colW, 22f), "VRF_Settings_MaxCombatPoints".Translate());
+                iy += 22f;
 
-            Widgets.Label(new Rect(localInfoX, iy, colW, 22f), "VRF_Settings_MinCombatPoints".Translate());
-            Widgets.Label(new Rect(mxpX,       iy, colW, 22f), "VRF_Settings_MaxCombatPoints".Translate());
-            iy += 22f;
-
-            {
-                float prevMrp = entry.minRaidPoints;
-                Widgets.TextFieldNumeric(new Rect(localInfoX, iy, fieldW, 24f), ref entry.minRaidPoints, ref mrpBuf, 0f, 999999f);
-                _mrpBuffers[bufKey] = mrpBuf;
-                if (entry.minRaidPoints != prevMrp) VRF_Mod.Instance.WriteSettings();
-                Rect minTipRect = new Rect(localInfoX + fieldW + 4f, iy + 3f, 18f, 18f);
-                GUI.color = Color.yellow;
-                Widgets.Label(minTipRect, "?");
-                GUI.color = Color.white;
-                if (Mouse.IsOver(minTipRect))
-                    TooltipHandler.TipRegion(minTipRect, "VRF_Settings_Tip_MinPoints".Translate());
+                {
+                    float prevMrp = entry.minRaidPoints;
+                    Widgets.TextFieldNumeric(new Rect(localInfoX, iy, fieldW, 24f), ref entry.minRaidPoints, ref mrpBuf, 0f, 999999f);
+                    _mrpBuffers[bufKey] = mrpBuf;
+                    if (entry.minRaidPoints != prevMrp) VRF_Mod.Instance.WriteSettings();
+                    Rect minTipRect = new Rect(localInfoX + fieldW + 4f, iy + 3f, 18f, 18f);
+                    GUI.color = Color.yellow;
+                    Widgets.Label(minTipRect, "?");
+                    GUI.color = Color.white;
+                    if (Mouse.IsOver(minTipRect))
+                        TooltipHandler.TipRegion(minTipRect, "VRF_Settings_Tip_MinPoints".Translate());
+                }
+                {
+                    float prevMxp = entry.maxRaidPoints;
+                    Widgets.TextFieldNumeric(new Rect(mxpX, iy, fieldW, 24f), ref entry.maxRaidPoints, ref mxpBuf, 0f, 999999f);
+                    _mxpBuffers[bufKey] = mxpBuf;
+                    if (entry.maxRaidPoints != prevMxp) VRF_Mod.Instance.WriteSettings();
+                    Rect maxTipRect = new Rect(mxpX + fieldW + 4f, iy + 3f, 18f, 18f);
+                    GUI.color = Color.yellow;
+                    Widgets.Label(maxTipRect, "?");
+                    GUI.color = Color.white;
+                    if (Mouse.IsOver(maxTipRect))
+                        TooltipHandler.TipRegion(maxTipRect, "VRF_Settings_Tip_MaxPoints".Translate());
+                }
+                iy += 28f;
             }
-            {
-                float prevMxp = entry.maxRaidPoints;
-                Widgets.TextFieldNumeric(new Rect(mxpX, iy, fieldW, 24f), ref entry.maxRaidPoints, ref mxpBuf, 0f, 999999f);
-                _mxpBuffers[bufKey] = mxpBuf;
-                if (entry.maxRaidPoints != prevMxp) VRF_Mod.Instance.WriteSettings();
-                Rect maxTipRect = new Rect(mxpX + fieldW + 4f, iy + 3f, 18f, 18f);
-                GUI.color = Color.yellow;
-                Widgets.Label(maxTipRect, "?");
-                GUI.color = Color.white;
-                if (Mouse.IsOver(maxTipRect))
-                    TooltipHandler.TipRegion(maxTipRect, "VRF_Settings_Tip_MaxPoints".Translate());
-            }
-            iy += 28f;
 
             float topSectionBottom = Mathf.Max(previewBox.yMax, iy) + Pad;
-            float sliderH  = vDef != null ? CalcSliderAreaHeight(vDef, entry) : 0f;
-            float flightH  = (vDef != null && vDef.type == VehicleType.Air) ? CalcFlightModeHeight(entry) + Pad : 0f;
-            float paintH   = vDef != null ? CalcPaintSectionHeight(vDef, entry) : 0f;
-            float upgradeH = vDef != null ? CalcUpgradeSectionHeight(vDef, entry) : 0f;
 
-            if (vDef != null)
+            if (isGrav)
             {
+                // Flight mode section for gravship (only Desactivado / Gravship)
+                float flightH = CalcFlightModeHeight(entry);
+                DrawFlightModeSection(new Rect(0f, topSectionBottom, viewW, flightH), vDef, entry, bufKey);
+                float listY = topSectionBottom + flightH + Pad;
+
+                // Gravship structures list
+                float listH = Mathf.Max(viewRect.height - listY - Pad, 260f);
+                DrawGravshipStructuresList(new Rect(0f, listY, viewW, listH), vDef, factionConfig, kind);
+            }
+            else if (vDef != null)
+            {
+                float sliderH  = CalcSliderAreaHeight(vDef, entry);
+                float flightH  = (vDef.type == VehicleType.Air) ? CalcFlightModeHeight(entry) + Pad : 0f;
+                float paintH   = CalcPaintSectionHeight(vDef, entry);
+                float upgradeH = CalcUpgradeSectionHeight(vDef, entry);
+
                 DrawResourceSliders(new Rect(0f, topSectionBottom, viewW, sliderH), vDef, entry);
                 if (vDef.type == VehicleType.Air)
                     DrawFlightModeSection(new Rect(0f, topSectionBottom + sliderH + Pad, viewW, CalcFlightModeHeight(entry)), vDef, entry, bufKey);
@@ -652,24 +665,382 @@ namespace VehicleRaidFramework
             Widgets.EndScrollView();
         }
 
+        private static System.Reflection.MethodInfo _loadImageMethod;
+        private static bool _loadImageMethodSearched;
+
+        private static bool TryLoadImageToTexture(Texture2D tex, byte[] bytes)
+        {
+            if (!_loadImageMethodSearched)
+            {
+                _loadImageMethodSearched = true;
+                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    var type = asm.GetType("UnityEngine.ImageConversion");
+                    if (type != null)
+                    {
+                        _loadImageMethod = type.GetMethod("LoadImage", new System.Type[] { typeof(Texture2D), typeof(byte[]) });
+                        if (_loadImageMethod != null) break;
+                    }
+                }
+            }
+            if (_loadImageMethod != null)
+            {
+                try
+                {
+                    return (bool)_loadImageMethod.Invoke(null, new object[] { tex, bytes });
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        public static void DrawGravshipPresetStructureThumbnail(Rect thumbRect, string filePath, VehicleDef vDef, PawnKindDef kind = null)
+        {
+            // 1. Check if a pre-rendered or saved PNG thumbnail exists alongside the JSON preset
+            string pngPath = System.IO.Path.ChangeExtension(filePath, ".png");
+            if (System.IO.File.Exists(pngPath))
+            {
+                if (!_cachedPresetTextures.TryGetValue(pngPath, out Texture2D pngTex) || pngTex == null)
+                {
+                    try
+                    {
+                        pngTex = new Texture2D(2, 2);
+                        byte[] bytes = System.IO.File.ReadAllBytes(pngPath);
+                        if (TryLoadImageToTexture(pngTex, bytes))
+                        {
+                            _cachedPresetTextures[pngPath] = pngTex;
+                        }
+                    }
+                    catch
+                    {
+                        pngTex = null;
+                    }
+                }
+
+                if (pngTex != null)
+                {
+                    GUI.DrawTexture(thumbRect.ContractedBy(2f), pngTex, ScaleMode.ScaleToFit);
+                    return;
+                }
+            }
+
+            // 2. Load or retrieve cached preset data
+            VehicleMapFramework.VRF_GravshipPresetData data = null;
+            try
+            {
+                var fileInfo = new System.IO.FileInfo(filePath);
+                if (fileInfo.Exists)
+                {
+                    if (_cachedPresetData.TryGetValue(filePath, out CachedPresetInfo cached) && cached != null && cached.lastWrite == fileInfo.LastWriteTimeUtc)
+                    {
+                        data = cached.data;
+                    }
+                    else
+                    {
+                        data = VehicleMapFramework.VRF_GravshipPresetUtility.LoadGravshipPresetFromFile(filePath);
+                        _cachedPresetData[filePath] = new CachedPresetInfo { lastWrite = fileInfo.LastWriteTimeUtc, data = data };
+                    }
+                }
+            }
+            catch { }
+
+            // Fallback if data is missing or empty
+            if (data == null || ((data.cells == null || data.cells.Count == 0) && (data.buildings == null || data.buildings.Count == 0)))
+            {
+                if (vDef != null) DrawVehicleWithTurrets(thumbRect.ContractedBy(4f), vDef);
+                else if (kind != null) DrawVehicleThumb(thumbRect.ContractedBy(4f), kind);
+                return;
+            }
+
+            // 3. Procedural blueprint rendering of the structure
+            // Calculate bounding coordinates using GenAdj.OccupiedRect for exact multi-cell building bounds
+            int minX = int.MaxValue, maxX = int.MinValue;
+            int minZ = int.MaxValue, maxZ = int.MinValue;
+
+            if (data.cells != null)
+            {
+                for (int i = 0; i < data.cells.Count; i++)
+                {
+                    var c = data.cells[i];
+                    if (c.offsetX < minX) minX = c.offsetX;
+                    if (c.offsetX > maxX) maxX = c.offsetX;
+                    if (c.offsetZ < minZ) minZ = c.offsetZ;
+                    if (c.offsetZ > maxZ) maxZ = c.offsetZ;
+                }
+            }
+
+            if (data.buildings != null)
+            {
+                for (int i = 0; i < data.buildings.Count; i++)
+                {
+                    var b = data.buildings[i];
+                    ThingDef bDef = DefDatabase<ThingDef>.GetNamedSilentFail(b.defName);
+                    Rot4 r = new Rot4(b.rotation);
+                    CellRect occ = (bDef != null)
+                        ? GenAdj.OccupiedRect(new IntVec3(b.offsetX, 0, b.offsetZ), r, bDef.size)
+                        : new CellRect(b.offsetX, b.offsetZ, 1, 1);
+
+                    if (occ.minX < minX) minX = occ.minX;
+                    if (occ.maxX > maxX) maxX = occ.maxX;
+                    if (occ.minZ < minZ) minZ = occ.minZ;
+                    if (occ.maxZ > maxZ) maxZ = occ.maxZ;
+                }
+            }
+
+            if (minX > maxX || minZ > maxZ)
+            {
+                if (vDef != null) DrawVehicleWithTurrets(thumbRect.ContractedBy(4f), vDef);
+                return;
+            }
+
+            Rect drawBox = thumbRect.ContractedBy(4f);
+            int gridW = maxX - minX + 1;
+            int gridH = maxZ - minZ + 1;
+
+            float cellPx = Mathf.Min(drawBox.width / (gridW + 0.5f), drawBox.height / (gridH + 0.5f));
+            float renderW = gridW * cellPx;
+            float renderH = gridH * cellPx;
+            float startX = drawBox.x + (drawBox.width - renderW) * 0.5f;
+            float startY = drawBox.y + (drawBox.height - renderH) * 0.5f;
+
+            // A. Draw floor / foundation cells
+            Color floorColor = new Color(0.24f, 0.32f, 0.38f, 0.90f);
+            if (data.cells != null)
+            {
+                for (int i = 0; i < data.cells.Count; i++)
+                {
+                    var c = data.cells[i];
+                    float cx = startX + (c.offsetX - minX) * cellPx;
+                    float cy = startY + (maxZ - c.offsetZ) * cellPx;
+                    Rect cRect = new Rect(cx, cy, cellPx, cellPx);
+
+                    Widgets.DrawBoxSolid(cRect, floorColor);
+                    if (cellPx >= 3.5f)
+                    {
+                        Widgets.DrawBox(cRect, 1);
+                    }
+                }
+            }
+
+            // B. Draw buildings
+            if (data.buildings != null)
+            {
+                for (int i = 0; i < data.buildings.Count; i++)
+                {
+                    var b = data.buildings[i];
+                    ThingDef bDef = DefDatabase<ThingDef>.GetNamedSilentFail(b.defName);
+                    if (bDef == null) continue;
+
+                    Rot4 r = new Rot4(b.rotation);
+                    CellRect occ = GenAdj.OccupiedRect(new IntVec3(b.offsetX, 0, b.offsetZ), r, bDef.size);
+
+                    float bx = startX + (occ.minX - minX) * cellPx;
+                    float by = startY + (maxZ - occ.maxZ) * cellPx;
+                    float bw = occ.Width * cellPx;
+                    float bh = occ.Height * cellPx;
+                    Rect bRect = new Rect(bx, by, bw, bh);
+
+                    bool isEngine = bDef == ThingDefOf.GravEngine || (bDef.defName != null && (bDef.defName.Contains("GravEngine") || bDef.defName.Contains("Gravcore")));
+
+                    Color bColor = bDef.uiIconColor;
+                    if (!string.IsNullOrEmpty(b.stuffDef))
+                    {
+                        ThingDef stuffDef = DefDatabase<ThingDef>.GetNamedSilentFail(b.stuffDef);
+                        if (stuffDef?.stuffProps != null)
+                        {
+                            bColor = stuffDef.stuffProps.color;
+                        }
+                    }
+
+                    // 1. Draw solid cell footprint for every building cell
+                    // Walls / impassable objects get opaque filling, other structures get tinted base
+                    if (isEngine)
+                    {
+                        Widgets.DrawBoxSolid(bRect.ExpandedBy(1f), new Color(0f, 0.85f, 1f, 0.65f));
+                    }
+                    else if (bDef.IsWall || bDef.passability == Traversability.Impassable)
+                    {
+                        Widgets.DrawBoxSolid(bRect, bColor);
+                    }
+                    else
+                    {
+                        Color footColor = new Color(bColor.r * 0.35f + 0.1f, bColor.g * 0.35f + 0.1f, bColor.b * 0.35f + 0.1f, 0.75f);
+                        Widgets.DrawBoxSolid(bRect, footColor);
+                    }
+
+                    // 2. Draw building icon stretching across all occupied cells
+                    Texture2D icon = bDef.uiIcon;
+                    if (icon != null && !bDef.IsWall)
+                    {
+                        GUI.color = isEngine ? new Color(0.35f, 1f, 1f, 1f) : bColor;
+                        if (r != Rot4.North && r.AsAngle != 0f)
+                        {
+                            Matrix4x4 m = GUI.matrix;
+                            GUIUtility.RotateAroundPivot(r.AsAngle, bRect.center);
+                            GUI.DrawTexture(bRect, icon, ScaleMode.StretchToFill, true);
+                            GUI.matrix = m;
+                        }
+                        else
+                        {
+                            GUI.DrawTexture(bRect, icon, ScaleMode.StretchToFill, true);
+                        }
+                        GUI.color = Color.white;
+                    }
+
+                    if (cellPx >= 3f)
+                    {
+                        Widgets.DrawBox(bRect, 1);
+                    }
+                }
+            }
+        }
+
+        private static void DrawGravshipStructuresList(Rect rect, VehicleDef vDef, VRF_NaturalRaidFactionConfig factionConfig, PawnKindDef kind)
+        {
+            var presetFiles = VehicleMapFramework.VRF_GravshipPresetUtility.FindAllGravshipPresetFiles();
+            float y = rect.y;
+
+            GUI.color = new Color(0.7f, 0.85f, 1f);
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(rect.x, y, rect.width, 30f), "Estructuras Gravship Disponibles");
+            GUI.color = Color.white;
+            y += 34f;
+            Text.Font = GameFont.Small;
+
+            if (presetFiles == null || presetFiles.Count == 0)
+            {
+                GUI.color = new Color(0.75f, 0.75f, 0.75f);
+                Widgets.Label(new Rect(rect.x, y, rect.width, 26f), "No se encontraron estructuras/presets guardados en las carpetas de Mods o Config.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            const float cardH = 76f;
+            const float cardPad = 8f;
+
+            float listVisibleH = Mathf.Max(rect.height - 34f, 220f);
+            float totalH = presetFiles.Count * (cardH + cardPad);
+            bool needsScroll = totalH > listVisibleH;
+
+            Rect outRect = new Rect(rect.x, y, rect.width, listVisibleH);
+            Rect viewRect = new Rect(0f, 0f, outRect.width - (needsScroll ? 16f : 0f), Mathf.Max(totalH, listVisibleH));
+
+            Widgets.BeginScrollView(outRect, ref _gravshipListScrollPos, viewRect);
+
+            float curY = 0f;
+            for (int i = 0; i < presetFiles.Count; i++)
+            {
+                string filePath = presetFiles[i];
+                string pName = System.IO.Path.GetFileNameWithoutExtension(filePath);
+                var gEntry = factionConfig.GetOrCreateGravshipEntry(pName);
+                if (gEntry.combatPower <= 0f && kind != null) gEntry.combatPower = kind.combatPower;
+                if (gEntry.minRaidPoints <= 0f) gEntry.minRaidPoints = gEntry.combatPower;
+
+                Rect cardRect = new Rect(0f, curY, viewRect.width, cardH);
+                Widgets.DrawBoxSolid(cardRect, new Color(0.12f, 0.12f, 0.12f, 0.75f));
+                Widgets.DrawBox(cardRect, 1);
+                Widgets.DrawHighlightIfMouseover(cardRect);
+
+                // Invisible click area on the left/center of the card to open editor
+                Rect clickArea = new Rect(cardRect.x, cardRect.y, cardRect.width - 220f, cardRect.height);
+                if (Widgets.ButtonInvisible(clickArea))
+                {
+                    Find.WindowStack.Add(new Dialog_VRF_GravshipStructureEditor(gEntry, vDef, filePath));
+                }
+
+                // Rendered vehicle / structure thumbnail
+                Rect thumbRect = new Rect(cardRect.x + 6f, cardRect.y + 6f, 64f, 64f);
+                Widgets.DrawBoxSolid(thumbRect, new Color(0.04f, 0.05f, 0.07f, 0.95f));
+                Widgets.DrawBox(thumbRect, 1);
+                DrawGravshipPresetStructureThumbnail(thumbRect, filePath, vDef, kind);
+
+                // Stats and labels
+                float infoX = thumbRect.xMax + 10f;
+                float infoW = cardRect.width - infoX - 225f;
+
+                Text.Font = GameFont.Medium;
+                Widgets.Label(new Rect(infoX, cardRect.y + 5f, infoW, 26f), pName);
+                Text.Font = GameFont.Small;
+
+                string maxPtsStr = gEntry.maxRaidPoints > 0f ? gEntry.maxRaidPoints.ToString("F0") : "Sin límite";
+                string statsText = $"Poder: {gEntry.combatPower:F0}   |   Min: {gEntry.minRaidPoints:F0}   |   Max: {maxPtsStr}";
+                GUI.color = new Color(0.85f, 0.85f, 0.85f);
+                Widgets.Label(new Rect(infoX, cardRect.y + 30f, infoW, 20f), statsText);
+
+                if (gEntry.enabled)
+                {
+                    GUI.color = new Color(0.55f, 1f, 0.55f);
+                    Widgets.Label(new Rect(infoX, cardRect.y + 50f, infoW, 20f), "Activo en raids naturales");
+                }
+                else
+                {
+                    GUI.color = new Color(0.6f, 0.6f, 0.6f);
+                    Widgets.Label(new Rect(infoX, cardRect.y + 50f, infoW, 20f), "Inactivo");
+                }
+                GUI.color = Color.white;
+
+                // Right side: Checkbox, Estrategias, Editar
+                float rightX = cardRect.xMax - 215f;
+
+                bool wasEn = gEntry.enabled;
+                Widgets.CheckboxLabeled(new Rect(rightX, cardRect.y + 6f, 110f, 24f), "Habilitar", ref gEntry.enabled);
+                if (gEntry.enabled != wasEn) VRF_Mod.Instance.WriteSettings();
+
+                int totalStrats = DefDatabase<RaidStrategyDef>.DefCount;
+                int allowedCount = gEntry.allowedRaidStrategies.Count == 0
+                    ? totalStrats
+                    : totalStrats - gEntry.allowedRaidStrategies.Count;
+                string stratLabel = $"Estrategias ({allowedCount}/{totalStrats})";
+                if (Widgets.ButtonText(new Rect(rightX, cardRect.y + 38f, 125f, 26f), stratLabel))
+                {
+                    Find.WindowStack.Add(new Dialog_VRF_RaidStrategies(gEntry, pName));
+                }
+
+                if (Widgets.ButtonText(new Rect(cardRect.xMax - 80f, cardRect.y + 38f, 74f, 26f), "Editar"))
+                {
+                    Find.WindowStack.Add(new Dialog_VRF_GravshipStructureEditor(gEntry, vDef, filePath));
+                }
+
+                curY += cardH + cardPad;
+            }
+
+            Widgets.EndScrollView();
+        }
+
         private static float CalcDetailContentHeight(PawnKindDef kind, VehicleDef vDef, VRF_NaturalRaidVehicleEntry entry, float previewSize, VRF_SpawnContext ctx)
         {
+            bool isGrav = IsGravship(vDef, kind);
+
             float infoH = 36f;
             if (vDef != null) infoH += 48f;
             infoH += 4f + 28f + 26f;
             if (ctx == VRF_SpawnContext.Raid) infoH += 4f + 30f; 
-            infoH += 6f + 22f + 30f + 22f + 28f + 28f;
             if (ctx != VRF_SpawnContext.Raid) infoH += 4f + 28f;
 
+            if (!isGrav)
+            {
+                infoH += 6f + 22f + 30f + 22f + 28f + 28f;
+            }
+
             float topSectionBottom = Mathf.Max(previewSize, infoH) + Pad;
+
+            if (isGrav)
+            {
+                float flightH = CalcFlightModeHeight(entry) + Pad;
+                var presetFiles = VehicleMapFramework.VRF_GravshipPresetUtility.FindAllGravshipPresetFiles();
+                int count = presetFiles != null ? presetFiles.Count : 0;
+                float listH = 34f + Mathf.Clamp(count * 84f, 180f, 380f);
+                return topSectionBottom + flightH + listH + Pad;
+            }
+
             float sliderH  = vDef != null ? CalcSliderAreaHeight(vDef, entry) : 0f;
-            float flightH  = (vDef != null && vDef.type == VehicleType.Air) ? CalcFlightModeHeight(entry) + Pad : 0f;
+            float flightH2 = (vDef != null && vDef.type == VehicleType.Air) ? CalcFlightModeHeight(entry) + Pad : 0f;
             float paintH   = vDef != null ? CalcPaintSectionHeight(vDef, entry) + Pad : 0f;
             float upgradeH = vDef != null ? CalcUpgradeSectionHeight(vDef, entry) + Pad : 0f;
-            return topSectionBottom + sliderH + flightH + paintH + upgradeH + Pad;
+            return topSectionBottom + sliderH + flightH2 + paintH + upgradeH + Pad;
         }
 
-        private static VehicleDef _selectedHoverVehicle;
+private static VehicleDef _selectedHoverVehicle;
         private static Vector2   _hoverDetailScrollPos;
         private static string    _hoverVehicleSearchFilter = "";
 
@@ -1367,37 +1738,40 @@ namespace VehicleRaidFramework
 
             if (Widgets.ButtonText(new Rect(rect.x, y, Mathf.Min(rect.width, 220f), 24f), currentTypeLabel))
             {
-                Find.WindowStack.Add(new FloatMenu(new List<FloatMenuOption>
+                bool isGravVehicle = IsGravship(vDef);
+                List<FloatMenuOption> flightOptions = new List<FloatMenuOption>();
+                flightOptions.Add(new FloatMenuOption("VRF_Settings_FlightModeDisabled".Translate(), () =>
                 {
-                    new FloatMenuOption("VRF_Settings_FlightModeDisabled".Translate(), () =>
-                    {
-                        entry.helicopterMode = false;
-                        VRF_Mod.Instance.WriteSettings();
-                    }),
-                    new FloatMenuOption("VRF_Settings_HelicopterType".Translate(), () =>
+                    entry.helicopterMode = false;
+                    VRF_Mod.Instance.WriteSettings();
+                }));
+                if (!isGravVehicle)
+                {
+                    flightOptions.Add(new FloatMenuOption("VRF_Settings_HelicopterType".Translate(), () =>
                     {
                         entry.helicopterMode  = true;
                         entry.airVehicleType  = "Helicopter";
                         entry.helicopterMoveSpeed = 4.5f;
                         _hmsBuffers.Remove(bufKey);
                         VRF_Mod.Instance.WriteSettings();
-                    }),
-                    new FloatMenuOption("VRF_Settings_AirplaneType".Translate(), () =>
+                    }));
+                    flightOptions.Add(new FloatMenuOption("VRF_Settings_AirplaneType".Translate(), () =>
                     {
                         entry.helicopterMode  = true;
                         entry.airVehicleType  = "Airplane";
                         entry.helicopterMoveSpeed = 15f;
                         _hmsBuffers.Remove(bufKey);
                         VRF_Mod.Instance.WriteSettings();
-                    }),
-                    new FloatMenuOption("VRF_Settings_GravshipType".Translate(), () =>
-                    {
-                        entry.helicopterMode  = true;
-                        entry.airVehicleType  = "Gravship";
-                        _hmsBuffers.Remove(bufKey);
-                        VRF_Mod.Instance.WriteSettings();
-                    }),
+                    }));
+                }
+                flightOptions.Add(new FloatMenuOption("VRF_Settings_GravshipType".Translate(), () =>
+                {
+                    entry.helicopterMode  = true;
+                    entry.airVehicleType  = "Gravship";
+                    _hmsBuffers.Remove(bufKey);
+                    VRF_Mod.Instance.WriteSettings();
                 }));
+                Find.WindowStack.Add(new FloatMenu(flightOptions));
             }
             y += 28f;
 
@@ -1718,20 +2092,14 @@ namespace VehicleRaidFramework
 
         private static void DrawConfigTab(Rect rect)
         {
-            float viewW = rect.width - 20f;
-            Rect viewRect = new Rect(0f, 0f, viewW, Mathf.Max(_configTabHeight, rect.height));
-
-            Widgets.BeginScrollView(rect, ref _configScrollPos, viewRect);
-
-            float x = 0f;
-            float y = 0f;
+            float y = rect.y;
 
             Text.Font = GameFont.Medium;
             {
                 string title  = "VRF_Settings_GlobalStrategyTitle".Translate();
                 float  titleW = Text.CalcSize(title).x + 4f;
-                Widgets.Label(new Rect(x, y, titleW, 32f), title);
-                Rect titleTip = new Rect(x + titleW + 2f, y + 7f, 22f, 22f);
+                Widgets.Label(new Rect(rect.x, y, titleW, 32f), title);
+                Rect titleTip = new Rect(rect.x + titleW + 2f, y + 7f, 22f, 22f);
                 GUI.color = Color.yellow;
                 Text.Font = GameFont.Small;
                 Widgets.Label(titleTip, "?");
@@ -1748,80 +2116,40 @@ namespace VehicleRaidFramework
             int allowedCount  = totalStrats - excludedCount;
             string btnLabel   = "VRF_Settings_GlobalStrategyBtn".Translate() +
                                 $" ({allowedCount}/{totalStrats})";
-            if (Widgets.ButtonText(new Rect(x, y, 260f, 28f), btnLabel))
+            if (Widgets.ButtonText(new Rect(rect.x, y, 260f, 28f), btnLabel))
                 Find.WindowStack.Add(new Dialog_VRF_GlobalRaidStrategies());
             y += 36f;
 
             // Configuración de Propulsores de Gravship
             y += 8f;
             GUI.color = new Color(0.7f, 0.9f, 1f);
-            Widgets.Label(new Rect(x, y, viewW, 22f), "VRF_ThrusterConfig_Title".Translate());
+            Widgets.Label(new Rect(rect.x, y, rect.width, 22f), "VRF_ThrusterConfig_Title".Translate());
             GUI.color = Color.white;
             y += 24f;
-            if (Widgets.ButtonText(new Rect(x, y, 280f, 28f), "VRF_ThrusterConfig_OpenButton".Translate()))
+            if (Widgets.ButtonText(new Rect(rect.x, y, 280f, 28f), "VRF_ThrusterConfig_OpenButton".Translate()))
             {
                 Find.WindowStack.Add(new VehicleMapFramework.Dialog_VRF_ThrusterConfig());
             }
             y += 34f;
 
-            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
+            Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
             y += 14f;
 
-            // Probabilidad de raid con vehículos
             Text.Font = GameFont.Medium;
-            {
-                string title  = "VRF_Settings_VehicleRaidChanceTitle".Translate();
-                float  titleW = Text.CalcSize(title).x + 4f;
-                Widgets.Label(new Rect(x, y, titleW, 32f), title);
-                Rect titleTip = new Rect(x + titleW + 2f, y + 7f, 22f, 22f);
-                GUI.color = Color.yellow;
-                Text.Font = GameFont.Small;
-                Widgets.Label(titleTip, "?");
-                Text.Font = GameFont.Medium;
-                GUI.color = Color.white;
-                if (Mouse.IsOver(titleTip))
-                    TooltipHandler.TipRegion(titleTip, "VRF_Settings_Tip_VehicleRaidChance".Translate());
-            }
+            Widgets.Label(new Rect(rect.x, y, rect.width, 32f), "VRF_Settings_VehiclePointsFractionTitle".Translate());
             y += 36f;
             Text.Font = GameFont.Small;
 
             {
-                float sliderW = Mathf.Min(viewW * 0.5f, 360f);
-                float prevChance = VRF_Mod.Settings.VehicleRaidChance;
-                float newChance = Widgets.HorizontalSlider(
-                    new Rect(x, y + 4f, sliderW, 20f),
-                    prevChance, 0f, 1f, true);
-                newChance = Mathf.Round(newChance * 100f) / 100f;
-                string pctLabel = (newChance * 100f).ToString("F0") + " %";
-                Text.Anchor = TextAnchor.MiddleLeft;
-                Widgets.Label(new Rect(x + sliderW + 10f, y, 60f, 28f), pctLabel);
-                Text.Anchor = TextAnchor.UpperLeft;
-                if (Mathf.Abs(newChance - prevChance) > 0.001f)
-                {
-                    VRF_Mod.Settings.VehicleRaidChance = newChance;
-                    VRF_Mod.Instance.WriteSettings();
-                }
-            }
-            y += 34f;
-
-            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
-            y += 14f;
-
-            Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(x, y, viewW, 32f), "VRF_Settings_VehiclePointsFractionTitle".Translate());
-            y += 36f;
-            Text.Font = GameFont.Small;
-
-            {
-                float sliderW = Mathf.Min(viewW * 0.5f, 360f);
+                float sliderW = Mathf.Min(rect.width * 0.5f, 360f);
                 float prevFrac = VRF_Mod.Settings.VehiclePointsFraction;
                 float newFrac = Widgets.HorizontalSlider(
-                    new Rect(x, y + 4f, sliderW, 20f),
+                    new Rect(rect.x, y + 4f, sliderW, 20f),
                     prevFrac, 0f, 1f, true);
                 newFrac = Mathf.Round(newFrac * 100f) / 100f;
                 string pctLabel = (newFrac * 100f).ToString("F0") + " %";
                 Text.Anchor = TextAnchor.MiddleLeft;
-                Widgets.Label(new Rect(x + sliderW + 10f, y, 60f, 28f), pctLabel);
+                Widgets.Label(new Rect(rect.x + sliderW + 10f, y, 60f, 28f), pctLabel);
                 Text.Anchor = TextAnchor.UpperLeft;
                 if (Mathf.Abs(newFrac - prevFrac) > 0.001f)
                 {
@@ -1831,24 +2159,24 @@ namespace VehicleRaidFramework
             }
             y += 34f;
 
-            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
+            Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
             y += 14f;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(x, y, viewW, 32f), "VRF_Settings_AutoFillAmmoFractionTitle".Translate());
+            Widgets.Label(new Rect(rect.x, y, rect.width, 32f), "VRF_Settings_AutoFillAmmoFractionTitle".Translate());
             y += 36f;
             Text.Font = GameFont.Small;
 
             {
-                float sliderW = Mathf.Min(viewW * 0.5f, 360f);
+                float sliderW = Mathf.Min(rect.width * 0.5f, 360f);
                 float prevFrac = VRF_Mod.Settings.AutoFillAmmoFraction;
                 float newFrac = Widgets.HorizontalSlider(
-                    new Rect(x, y + 4f, sliderW, 20f),
+                    new Rect(rect.x, y + 4f, sliderW, 20f),
                     prevFrac, 0f, 1f, true);
                 newFrac = Mathf.Round(newFrac * 100f) / 100f;
                 string pctLabel = (newFrac * 100f).ToString("F0") + " %";
                 Text.Anchor = TextAnchor.MiddleLeft;
-                Widgets.Label(new Rect(x + sliderW + 10f, y, 60f, 28f), pctLabel);
+                Widgets.Label(new Rect(rect.x + sliderW + 10f, y, 60f, 28f), pctLabel);
                 Text.Anchor = TextAnchor.UpperLeft;
                 if (Mathf.Abs(newFrac - prevFrac) > 0.001f)
                 {
@@ -1858,15 +2186,15 @@ namespace VehicleRaidFramework
             }
             y += 34f;
 
-            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
+            Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
             y += 14f;
 
             Text.Font = GameFont.Medium;
             {
                 string title  = "VRF_Settings_EstimatorTitle".Translate();
                 float  titleW = Text.CalcSize(title).x + 4f;
-                Widgets.Label(new Rect(x, y, titleW, 32f), title);
-                Rect titleTip = new Rect(x + titleW + 2f, y + 7f, 22f, 22f);
+                Widgets.Label(new Rect(rect.x, y, titleW, 32f), title);
+                Rect titleTip = new Rect(rect.x + titleW + 2f, y + 7f, 22f, 22f);
                 GUI.color = Color.yellow;
                 Text.Font = GameFont.Small;
                 Widgets.Label(titleTip, "?");
@@ -1882,18 +2210,18 @@ namespace VehicleRaidFramework
             float fieldW = 100f;
             float rowH = 28f;
 
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightHP".Translate(), ref VRF_Mod.Settings.WeightHP, "WeightHP");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightArmor".Translate(), ref VRF_Mod.Settings.WeightArmor, "WeightArmor");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightDPS".Translate(), ref VRF_Mod.Settings.WeightDPS, "WeightDPS");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightRange".Translate(), ref VRF_Mod.Settings.WeightRange, "WeightRange");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightSpeed".Translate(), ref VRF_Mod.Settings.WeightSpeed, "WeightSpeed");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightDrivers".Translate(), ref VRF_Mod.Settings.WeightDrivers, "WeightDrivers");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightGunners".Translate(), ref VRF_Mod.Settings.WeightGunners, "WeightGunners");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightPassengers".Translate(), ref VRF_Mod.Settings.WeightPassengers, "WeightPassengers");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightSize".Translate(), ref VRF_Mod.Settings.WeightSize, "WeightSize");
-            DrawConfigField(x, ref y, labelW, fieldW, rowH, "VRF_Settings_AirMultiplier".Translate(), ref VRF_Mod.Settings.AirMultiplier, "AirMultiplier");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightHP".Translate(), ref VRF_Mod.Settings.WeightHP, "WeightHP");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightArmor".Translate(), ref VRF_Mod.Settings.WeightArmor, "WeightArmor");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightDPS".Translate(), ref VRF_Mod.Settings.WeightDPS, "WeightDPS");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightRange".Translate(), ref VRF_Mod.Settings.WeightRange, "WeightRange");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightSpeed".Translate(), ref VRF_Mod.Settings.WeightSpeed, "WeightSpeed");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightDrivers".Translate(), ref VRF_Mod.Settings.WeightDrivers, "WeightDrivers");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightGunners".Translate(), ref VRF_Mod.Settings.WeightGunners, "WeightGunners");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightPassengers".Translate(), ref VRF_Mod.Settings.WeightPassengers, "WeightPassengers");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_WeightSize".Translate(), ref VRF_Mod.Settings.WeightSize, "WeightSize");
+            DrawConfigField(rect.x, ref y, labelW, fieldW, rowH, "VRF_Settings_AirMultiplier".Translate(), ref VRF_Mod.Settings.AirMultiplier, "AirMultiplier");
             {
-                Rect airTip = new Rect(x + labelW + fieldW + 6f, y - rowH + (rowH - 18f) * 0.5f, 18f, 18f);
+                Rect airTip = new Rect(rect.x + labelW + fieldW + 6f, y - rowH + (rowH - 18f) * 0.5f, 18f, 18f);
                 GUI.color = Color.yellow;
                 Widgets.Label(airTip, "?");
                 GUI.color = Color.white;
@@ -1903,38 +2231,38 @@ namespace VehicleRaidFramework
 
             y += 10f;
             bool prevTransport = VRF_Mod.Settings.AutoFillTransportVehicles;
-            Widgets.CheckboxLabeled(new Rect(x, y, 400f, 24f), "VRF_Settings_AutoFillTransport".Translate(), ref VRF_Mod.Settings.AutoFillTransportVehicles);
+            Widgets.CheckboxLabeled(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_AutoFillTransport".Translate(), ref VRF_Mod.Settings.AutoFillTransportVehicles);
             if (prevTransport != VRF_Mod.Settings.AutoFillTransportVehicles) VRF_Mod.Instance.WriteSettings();
             y += 30f;
 
             bool prevSiegeDrop = VRF_Mod.Settings.AutoFillSiegeDropVehicles;
-            Widgets.CheckboxLabeled(new Rect(x, y, 400f, 24f), "VRF_Settings_AutoFillSiegeDrop".Translate(), ref VRF_Mod.Settings.AutoFillSiegeDropVehicles);
+            Widgets.CheckboxLabeled(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_AutoFillSiegeDrop".Translate(), ref VRF_Mod.Settings.AutoFillSiegeDropVehicles);
             if (prevSiegeDrop != VRF_Mod.Settings.AutoFillSiegeDropVehicles) VRF_Mod.Instance.WriteSettings();
-            if (Mouse.IsOver(new Rect(x, y, 400f, 24f)))
-                TooltipHandler.TipRegion(new Rect(x, y, 400f, 24f), "VRF_Settings_AutoFillSiegeDropDesc".Translate());
+            if (Mouse.IsOver(new Rect(rect.x, y, 400f, 24f)))
+                TooltipHandler.TipRegion(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_AutoFillSiegeDropDesc".Translate());
             y += 30f;
 
             bool prevDropOnly = VRF_Mod.Settings.SiegeDropOnlyOnDropRaids;
-            Widgets.CheckboxLabeled(new Rect(x, y, 400f, 24f), "VRF_Settings_SiegeDropOnly".Translate(), ref VRF_Mod.Settings.SiegeDropOnlyOnDropRaids);
+            Widgets.CheckboxLabeled(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_SiegeDropOnly".Translate(), ref VRF_Mod.Settings.SiegeDropOnlyOnDropRaids);
             if (prevDropOnly != VRF_Mod.Settings.SiegeDropOnlyOnDropRaids) VRF_Mod.Instance.WriteSettings();
-            if (Mouse.IsOver(new Rect(x, y, 400f, 24f)))
-                TooltipHandler.TipRegion(new Rect(x, y, 400f, 24f), "VRF_Settings_SiegeDropOnlyDesc".Translate());
+            if (Mouse.IsOver(new Rect(rect.x, y, 400f, 24f)))
+                TooltipHandler.TipRegion(new Rect(rect.x, y, 400f, 24f), "VRF_Settings_SiegeDropOnlyDesc".Translate());
             y += 30f;
 
-            Widgets.DrawLineHorizontal(x, y, viewW * 0.6f);
+            Widgets.DrawLineHorizontal(rect.x, y, rect.width * 0.6f);
             y += 14f;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(x, y, viewW, 30f), "Developer / Debug");
+            Widgets.Label(new Rect(rect.x, y, rect.width, 30f), "Developer / Debug");
             y += 34f;
             Text.Font = GameFont.Small;
 
             bool prevVerbose = VRF_Mod.Settings.VerboseAILogging;
-            Widgets.CheckboxLabeled(new Rect(x, y, 500f, 24f),
+            Widgets.CheckboxLabeled(new Rect(rect.x, y, 500f, 24f),
                 "Verbose NPC vehicle AI logging",
                 ref VRF_Mod.Settings.VerboseAILogging);
-            if (Mouse.IsOver(new Rect(x, y, 500f, 24f)))
-                TooltipHandler.TipRegion(new Rect(x, y, 500f, 24f),
+            if (Mouse.IsOver(new Rect(rect.x, y, 500f, 24f)))
+                TooltipHandler.TipRegion(new Rect(rect.x, y, 500f, 24f),
                     "When enabled, detailed diagnostics are written to the log for every VRF NPC vehicle event: " +
                     "job given, job started/ended, duty change, lord transition, power-state change, " +
                     "enemy-target acquisition, periodic full state dump, and more. " +
@@ -1943,23 +2271,19 @@ namespace VehicleRaidFramework
                 VRF_Mod.Instance.WriteSettings();
             y += 30f;
 
-            if (Widgets.ButtonText(new Rect(x, y, 120f, 30f), "VRF_Settings_Save".Translate()))
+            if (Widgets.ButtonText(new Rect(rect.x, y, 120f, 30f), "VRF_Settings_Save".Translate()))
             {
                 VRF_Mod.Instance.WriteSettings();
                 Messages.Message("VRF_Settings_Saved".Translate(), MessageTypeDefOf.PositiveEvent, false);
             }
 
-            if (Widgets.ButtonText(new Rect(x + 130f, y, 120f, 30f), "VRF_Settings_Reset".Translate()))
+            if (Widgets.ButtonText(new Rect(rect.x + 130f, y, 120f, 30f), "VRF_Settings_Reset".Translate()))
             {
                 VRF_Mod.Settings.ResetEstimatorSettings();
                 _configBufs.Clear();
                 VRF_Mod.Instance.WriteSettings();
                 Messages.Message("VRF_Settings_ResetMsg".Translate(), MessageTypeDefOf.NeutralEvent, false);
             }
-            y += 36f;
-
-            _configTabHeight = y + 20f;
-            Widgets.EndScrollView();
         }
 
         private static void DrawConfigField(float x, ref float y, float labelW, float fieldW, float rowH, string label, ref float val, string key)

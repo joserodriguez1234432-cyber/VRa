@@ -57,10 +57,6 @@ namespace VehicleRaidFramework
             var enabledEntries = factionConfig.vehicleEntries.Where(e => e.enabled).ToList();
             if (enabledEntries.Count == 0) return;
 
-            float raidChance = Mathf.Clamp01(VRF_Mod.Settings?.VehicleRaidChance ?? 1.0f);
-            if (raidChance < 1.0f && (raidChance <= 0f || !Rand.Chance(raidChance)))
-                return;
-
             bool isDropArrival = IsDropPodArrival(parms);
             if (isDropArrival && (VRF_Mod.Settings != null && !VRF_Mod.Settings.allowGlobalDropPodRaids))
                 return;
@@ -370,10 +366,22 @@ namespace VehicleRaidFramework
                     }
 
                     VehiclePawn vehicle = null;
-                    if (!string.IsNullOrEmpty(spawnEntry.gravshipPresetName))
+                    string targetPresetName = spawnEntry.gravshipPresetName;
+                    bool spawnIsGravship = spawnEntry.airVehicleType == "Gravship";
+                    if (string.IsNullOrEmpty(targetPresetName) && spawnIsGravship)
+                    {
+                        var gravCfg = VRF_Mod.Settings?.GetFactionConfig(parms.faction.def.defName);
+                        var enabledPresets = gravCfg?.gravshipEntries?.Where(g => g.enabled).ToList();
+                        if (enabledPresets != null && enabledPresets.Count > 0)
+                        {
+                            targetPresetName = enabledPresets.RandomElement().presetName;
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(targetPresetName))
                     {
                         var allFiles = VehicleMapFramework.VRF_GravshipPresetUtility.FindAllGravshipPresetFiles();
-                        string targetFile = allFiles.FirstOrDefault(f => string.Equals(System.IO.Path.GetFileNameWithoutExtension(f), spawnEntry.gravshipPresetName, StringComparison.OrdinalIgnoreCase));
+                        string targetFile = allFiles.FirstOrDefault(f => string.Equals(System.IO.Path.GetFileNameWithoutExtension(f), targetPresetName, StringComparison.OrdinalIgnoreCase));
                         if (!string.IsNullOrEmpty(targetFile) && System.IO.File.Exists(targetFile))
                         {
                             var presetData = VehicleMapFramework.VRF_GravshipPresetUtility.LoadGravshipPresetFromFile(targetFile);

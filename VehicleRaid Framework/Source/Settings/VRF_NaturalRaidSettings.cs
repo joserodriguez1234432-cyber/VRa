@@ -32,8 +32,10 @@ namespace VehicleRaidFramework
         public string presetName;
         public bool enabled = false;
         public float weight = 1f;
+        public float combatPower = 0f;
         public float minRaidPoints = 0f;
         public float maxRaidPoints = 0f;
+        public List<string> allowedRaidStrategies = new List<string>();
 
         public VRF_GravshipRaidEntry() { }
         public VRF_GravshipRaidEntry(string name) { presetName = name; }
@@ -43,8 +45,11 @@ namespace VehicleRaidFramework
             Scribe_Values.Look(ref presetName,    "presetName");
             Scribe_Values.Look(ref enabled,       "enabled",       false);
             Scribe_Values.Look(ref weight,        "weight",        1f);
-            Scribe_Values.Look(ref minRaidPoints,  "minRaidPoints", 0f);
-            Scribe_Values.Look(ref maxRaidPoints,  "maxRaidPoints", 0f);
+            Scribe_Values.Look(ref combatPower,   "combatPower",   0f);
+            Scribe_Values.Look(ref minRaidPoints, "minRaidPoints", 0f);
+            Scribe_Values.Look(ref maxRaidPoints, "maxRaidPoints", 0f);
+            Scribe_Collections.Look(ref allowedRaidStrategies, "allowedRaidStrategies", LookMode.Value);
+            if (allowedRaidStrategies == null) allowedRaidStrategies = new List<string>();
         }
     }
 
@@ -327,7 +332,6 @@ namespace VehicleRaidFramework
 
         public bool allowGlobalDropPodRaids = true;
 
-        public float VehicleRaidChance = 1.0f;
         public float VehiclePointsFraction = 0.5f;
 
         public List<string> globalExcludedRaidStrategies = new List<string>();
@@ -412,7 +416,6 @@ namespace VehicleRaidFramework
             Scribe_Values.Look(ref AutoFillSiegeDropVehicles, "AutoFillSiegeDropVehicles", true);
             Scribe_Values.Look(ref SiegeDropOnlyOnDropRaids, "SiegeDropOnlyOnDropRaids", true);
             Scribe_Values.Look(ref allowGlobalDropPodRaids, "allowGlobalDropPodRaids", true);
-            Scribe_Values.Look(ref VehicleRaidChance, "VehicleRaidChance", 1.0f);
             Scribe_Values.Look(ref VehiclePointsFraction, "VehiclePointsFraction", 0.5f);
             Scribe_Collections.Look(ref globalExcludedRaidStrategies, "globalExcludedRaidStrategies", LookMode.Value);
             if (globalExcludedRaidStrategies == null) globalExcludedRaidStrategies = new List<string>();
