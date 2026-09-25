@@ -26,6 +26,32 @@ namespace VehicleRaidFramework
     /// </summary>
     public static class VRF_GravshipFuelHelper
     {
+        public static PropertyInfo GetPropertySafe(Type type, string name)
+        {
+            if (type == null) return null;
+            Type current = type;
+            while (current != null && current != typeof(object))
+            {
+                var prop = current.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (prop != null) return prop;
+                current = current.BaseType;
+            }
+            return null;
+        }
+
+        public static FieldInfo GetFieldSafe(Type type, string name)
+        {
+            if (type == null) return null;
+            Type current = type;
+            while (current != null && current != typeof(object))
+            {
+                var field = current.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (field != null) return field;
+                current = current.BaseType;
+            }
+            return null;
+        }
+
         /// <summary>Finds any Building_GravEngine on a map, ignoring faction.</summary>
         public static Building_GravEngine FindEngine(Map map)
         {
@@ -59,16 +85,15 @@ namespace VehicleRaidFramework
                     try
                     {
                         Type ct = comp.GetType();
-                        PropertyInfo amountProp = ct.GetProperty("AmountStored");
-                        PropertyInfo propsProp = ct.GetProperty("Props");
-                        if (amountProp == null || propsProp == null) break;
-                        object storageProps = propsProp.GetValue(comp);
-                        PropertyInfo capProp = storageProps?.GetType().GetProperty("storageCapacity");
-                        FieldInfo capFld = storageProps?.GetType().GetField("storageCapacity");
+                        PropertyInfo amountProp = GetPropertySafe(ct, "AmountStored");
+                        object storageProps = comp.props ?? GetPropertySafe(ct, "Props")?.GetValue(comp);
+                        PropertyInfo capProp = GetPropertySafe(storageProps?.GetType(), "storageCapacity");
+                        FieldInfo capFld = GetFieldSafe(storageProps?.GetType(), "storageCapacity");
                         float cap = capProp != null
                             ? Convert.ToSingle(capProp.GetValue(storageProps))
                             : (capFld != null ? Convert.ToSingle(capFld.GetValue(storageProps)) : 0f);
-                        fuel += Convert.ToSingle(amountProp.GetValue(comp));
+                        if (amountProp != null)
+                            fuel += Convert.ToSingle(amountProp.GetValue(comp));
                         capacity += cap;
                     }
                     catch { }
@@ -93,11 +118,9 @@ namespace VehicleRaidFramework
                 {
                     Type ct = comp.GetType();
                     if (ct.Name != "CompGravshipFacility" && ct.Name != "CompGravshipFacilityPossibly") continue;
-                    PropertyInfo pp = ct.GetProperty("Props");
-                    object facProps = pp?.GetValue(comp);
-                    FieldInfo ff = facProps?.GetType().GetField("providesFuel",
-                        BindingFlags.Public | BindingFlags.Instance);
-                    if (ff != null && (bool)ff.GetValue(facProps)) return true;
+                    object facProps = comp.props ?? GetPropertySafe(ct, "Props")?.GetValue(comp);
+                    FieldInfo ff = GetFieldSafe(facProps?.GetType(), "providesFuel");
+                    if (ff != null && Convert.ToBoolean(ff.GetValue(facProps))) return true;
                     break;
                 }
             }

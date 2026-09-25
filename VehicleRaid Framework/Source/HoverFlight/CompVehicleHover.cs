@@ -34,6 +34,8 @@ namespace VehicleRaid
         public float bobbingOffset = 0f;
 
         public FlightType FlightType => Props.flightType;
+        public bool IsGravshipEntity => FlightType == FlightType.Gravship || (Vehicle != null && (VehicleRaidFramework.CrewManager.IsGravshipVehicle(Vehicle) || Vehicle is global::VehicleMapFramework.VehiclePawnWithMap || (Vehicle.def != null && Vehicle.def.defName.IndexOf("grav", System.StringComparison.OrdinalIgnoreCase) >= 0)));
+
 
         public Vector2 realPos;
         public Vector2 targetPos;
@@ -768,6 +770,7 @@ namespace VehicleRaid
                 ticksInState++;
                 UpdateAltitude();
                 TickMotes();
+                if (IsGravshipEntity) TickGravshipThrusters();
 
                 if (ticksInState >= Props.maxTicks)
                 {
@@ -782,6 +785,7 @@ namespace VehicleRaid
                 UpdateAltitude();
                 TickMotes();
                 UpdatePropellerSpeed();
+                if (IsGravshipEntity) TickGravshipThrusters();
 
                 int landMaxTicks = (FlightType == FlightType.Airplane && Props.landingMaxTicks > 0)
                     ? Props.landingMaxTicks
@@ -829,6 +833,7 @@ namespace VehicleRaid
                 TickFacingTarget();
                 TickHoverMovement();
                 TickAttackTarget();
+                if (IsGravshipEntity) TickGravshipThrusters();
             }
             else if (State == HoverState.Crashing)
             {
@@ -1477,6 +1482,210 @@ namespace VehicleRaid
                 pos.y = Altitudes.AltitudeFor(fleckData.def.altitudeLayer);
 
                 LaunchProtocol.ThrowFleck(fleckData.def, pos, Vehicle.Map, size, airTime, angle, speed, rotationRate);
+            }
+        }
+
+                private static readonly int ShaderPropertyColor2 = Shader.PropertyToID("_Color2");
+
+        public void DrawGravshipThrusters()
+        {
+            if (!IsGravshipEntity) return;
+            if (State == HoverState.Grounded) return;
+            if (Vehicle == null || !Vehicle.Spawned || Vehicle.Map == null) return;
+
+            // Siempre activo en modo hover, con ligera oscilacion visual natural
+            float thrustFactor = UnityEngine.Random.Range(0.9f, 1.1f);
+
+            var gravVehicle = Vehicle as global::VehicleMapFramework.VehiclePawnWithMap;
+            if (gravVehicle != null && gravVehicle.VehicleMap != null && gravVehicle.VehicleMap.listerThings != null)
+            {
+                var things = gravVehicle.VehicleMap.listerThings.AllThings;
+                for (int i = 0; i < things.Count; i++)
+                {
+                    Thing t = things[i];
+                    if (t is Building b && !b.Destroyed)
+                    {
+                        var thrusterComp = b.TryGetComp<CompGravshipThruster>();
+                        if (thrusterComp != null)
+                        {
+                            DrawSingleGravshipThruster(gravVehicle, b, thrusterComp, thrustFactor);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                DrawFallbackGravshipFlames(thrustFactor);
+            }
+        }
+
+        private static MaterialPropertyBlock s_ThrusterFlameBlock;
+        private static MaterialPropertyBlock ThrusterFlameBlock
+        {
+            get
+            {
+                if (s_ThrusterFlameBlock == null)
+                    s_ThrusterFlameBlock = new MaterialPropertyBlock();
+                return s_ThrusterFlameBlock;
+            }
+        }
+
+        private void DrawSingleGravshipThruster(global::VehicleMapFramework.VehiclePawnWithMap gravVehicle, Building b, CompGravshipThruster thrusterComp, float thrustFactor)
+        {
+            CompProperties_GravshipThruster props = thrusterComp.Props;
+            if (props == null) return;
+
+            float baseScale = (float)b.def.size.x * props.flameSize;
+            float scale = baseScale * thrustFactor;
+
+            Rot4 thrusterRot = b.Rotation;
+            Quaternion thrusterQuat = thrusterRot.AsQuat;
+            Vector3 flameOffset = Vector3.zero;
+            if (props.flameOffsetsPerDirection != null && props.flameOffsetsPerDirection.Count > thrusterRot.AsInt)
+            {
+                flameOffset = thrusterQuat * props.flameOffsetsPerDirection[thrusterRot.AsInt];
+            }
+
+            Vector3 localFlamePos = b.DrawPos - thrusterRot.FacingCell.ToVector3() * ((float)b.def.size.z * 0.5f + scale * 0.5f) + flameOffset;
+            Vector3 worldFlamePos = global::VehicleMapFramework.VehicleMapUtility.ToBaseMapCoord(localFlamePos, gravVehicle);
+            worldFlamePos.y = AltitudeLayer.MetaOverlays.AltitudeFor() + 0.05f;
+
+            Shader shader = props.FlameShaderType?.Shader ?? ShaderTypeDefOf.MoteGlow.Shader;
+            Material mat = MaterialPool.MatFrom(new MaterialRequest(shader) { renderQueue = 3201 });
+
+            MaterialPropertyBlock block = ThrusterFlameBlock;
+            block.Clear();
+            Color flameColor = Color.white;
+            flameColor.a = UnityEngine.Random.Range(0.85f, 1.0f);
+            block.SetColor(ShaderPropertyColor2, flameColor);
+
+            if (props.flameShaderParameters != null)
+            {
+                for (int i = 0; i < props.flameShaderParameters.Count; i++)
+                {
+                    props.flameShaderParameters[i].Apply(block);
+                }
+            }
+
+            float vehicleAngle = currentFlyAngle;
+            Quaternion flameRot = Quaternion.AngleAxis(vehicleAngle + thrusterRot.AsAngle, Vector3.up);
+
+            GenDraw.DrawQuad(mat, worldFlamePos, flameRot, scale, block);
+        }
+
+        private void DrawFallbackGravshipFlames(float thrustFactor)
+        {
+            Vector3 forward = Quaternion.Euler(0f, currentFlyAngle, 0f) * Vector3.forward;
+            Vector3 right = Quaternion.Euler(0f, currentFlyAngle, 0f) * Vector3.right;
+            Vector3 shipCenter = new Vector3(realPos.x, AltitudeLayer.MetaOverlays.AltitudeFor() + 0.05f, realPos.y + currentAltitude);
+
+            float rearOffset = Mathf.Max(1.2f, Vehicle.def.Size.z * 0.48f);
+            float halfWidth = Mathf.Max(0.5f, Vehicle.def.Size.x * 0.35f);
+            Vector3 rearCenter = shipCenter - forward * rearOffset;
+
+            float speed = EffectiveHoverMoveSpeed;
+            int thrusterCount = Mathf.Clamp(Mathf.RoundToInt(speed / 0.1f), 1, 6);
+            float scale = Mathf.Max(2.5f, Vehicle.def.Size.x * 0.5f) * thrustFactor;
+
+            Shader shader = ShaderTypeDefOf.MoteGlow.Shader;
+            Material mat = MaterialPool.MatFrom(new MaterialRequest(shader) { renderQueue = 3201 });
+
+            MaterialPropertyBlock block = ThrusterFlameBlock;
+            block.Clear();
+            Color flameColor = Color.white;
+            flameColor.a = UnityEngine.Random.Range(0.85f, 1.0f);
+            block.SetColor(ShaderPropertyColor2, flameColor);
+
+            Quaternion flameRot = Quaternion.Euler(0f, currentFlyAngle, 0f);
+
+            for (int i = 0; i < thrusterCount; i++)
+            {
+                float offsetFactor = thrusterCount == 1 ? 0f : Mathf.Lerp(-1f, 1f, (float)i / (thrusterCount - 1));
+                Vector3 nozzlePos = rearCenter + right * (offsetFactor * halfWidth) - forward * (scale * 0.45f);
+                GenDraw.DrawQuad(mat, nozzlePos, flameRot, scale, block);
+            }
+        }
+
+        private void TickGravshipThrusters()
+        {
+            if (!IsGravshipEntity) return;
+            if (State == HoverState.Grounded) return;
+            if (Vehicle == null || !Vehicle.Spawned || Vehicle.Map == null) return;
+
+            // Emit particles and sound during hover, movement, takeoff and landing
+            if ((Find.TickManager.TicksGame + Vehicle.thingIDNumber) % 2 == 0)
+            {
+                FleckDef exhaustFleck = FleckDefOf.GravshipThrusterExhaust ?? DefDatabase<FleckDef>.GetNamedSilentFail("GravshipThrusterExhaust") ?? FleckDefOf.Smoke;
+
+                var gravVehicle = Vehicle as global::VehicleMapFramework.VehiclePawnWithMap;
+                if (gravVehicle != null && gravVehicle.VehicleMap != null && gravVehicle.VehicleMap.listerThings != null)
+                {
+                    var things = gravVehicle.VehicleMap.listerThings.AllThings;
+                    for (int i = 0; i < things.Count; i++)
+                    {
+                        Thing t = things[i];
+                        if (t is Building b && !b.Destroyed && b.TryGetComp<CompGravshipThruster>() is CompGravshipThruster thrusterComp)
+                        {
+                            Rot4 rot = b.Rotation;
+                            Vector3 localPos = b.DrawPos - rot.FacingCell.ToVector3() * ((float)b.def.size.z * 0.5f + 0.5f);
+                            Vector3 worldPos = global::VehicleMapFramework.VehicleMapUtility.ToBaseMapCoord(localPos, gravVehicle);
+                            worldPos.y = Altitudes.AltitudeFor(AltitudeLayer.MoteOverhead);
+
+                            Vector3 exhaustDir = -(Quaternion.AngleAxis(currentFlyAngle + rot.AsAngle, Vector3.up) * Vector3.forward);
+
+                            FleckCreationData fleckData = new FleckCreationData
+                            {
+                                def = exhaustFleck,
+                                spawnPosition = worldPos + UnityEngine.Random.insideUnitSphere * 0.2f,
+                                scale = UnityEngine.Random.Range(1.3f, 2.2f),
+                                velocity = exhaustDir * UnityEngine.Random.Range(5f, 9f) + UnityEngine.Random.insideUnitSphere * 0.35f,
+                                rotationRate = UnityEngine.Random.Range(-30f, 30f),
+                                ageTicksOverride = -1
+                            };
+                            Vehicle.Map.flecks.CreateFleck(fleckData);
+
+                            if (Rand.Chance(0.2f))
+                            {
+                                FleckMaker.ThrowFireGlow(worldPos, Vehicle.Map, UnityEngine.Random.Range(0.8f, 1.3f));
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    Vector3 shipCenter = new Vector3(realPos.x, Altitudes.AltitudeFor(AltitudeLayer.MoteOverhead), realPos.y);
+                    float rearOffset = Mathf.Max(1f, Vehicle.def.Size.z * 0.45f);
+                    float halfWidth = Mathf.Max(0.5f, Vehicle.def.Size.x * 0.35f);
+                    Vector3 forward = Quaternion.Euler(0f, currentFlyAngle, 0f) * Vector3.forward;
+                    Vector3 right = Quaternion.Euler(0f, currentFlyAngle, 0f) * Vector3.right;
+                    Vector3 rearCenter = shipCenter - forward * rearOffset;
+                    Vector3 exhaustDir = -forward;
+
+                    float speed = EffectiveHoverMoveSpeed;
+                    int thrusterCount = Mathf.Clamp(Mathf.RoundToInt(speed / 0.1f), 1, 6);
+
+                    for (int i = 0; i < thrusterCount; i++)
+                    {
+                        float offsetFactor = thrusterCount == 1 ? 0f : Mathf.Lerp(-1f, 1f, (float)i / (thrusterCount - 1));
+                        Vector3 emitterPos = rearCenter + right * (offsetFactor * halfWidth);
+
+                        FleckCreationData fleckData = new FleckCreationData
+                        {
+                            def = exhaustFleck,
+                            spawnPosition = emitterPos + UnityEngine.Random.insideUnitSphere * 0.15f,
+                            scale = UnityEngine.Random.Range(1.2f, 2.0f),
+                            velocity = exhaustDir * UnityEngine.Random.Range(5f, 9f) + UnityEngine.Random.insideUnitSphere * 0.4f,
+                            rotationRate = UnityEngine.Random.Range(-35f, 35f),
+                            ageTicksOverride = -1
+                        };
+                        Vehicle.Map.flecks.CreateFleck(fleckData);
+
+                        if (Rand.Chance(0.2f))
+                        {
+                            FleckMaker.ThrowFireGlow(emitterPos, Vehicle.Map, UnityEngine.Random.Range(0.8f, 1.4f));
+                        }
+                    }
+                }
             }
         }
     }

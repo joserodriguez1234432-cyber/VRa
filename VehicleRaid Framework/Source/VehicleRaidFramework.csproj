@@ -65,6 +65,12 @@
       <HintPath>..\..\Vehiclemap framework\1.6\Assemblies\VehicleMapFramework.dll</HintPath>
       <Private>False</Private>
     </Reference>
+
+    <!-- Vanilla Gravship Expanded (optional dependency - enemy thrusters) -->
+    <Reference Include="VanillaGravshipExpanded">
+      <HintPath>..\..\vanilla gravship 1\1.6\Assemblies\VanillaGravshipExpanded.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>

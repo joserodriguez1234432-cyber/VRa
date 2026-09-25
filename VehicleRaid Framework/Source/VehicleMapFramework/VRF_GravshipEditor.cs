@@ -167,6 +167,32 @@ namespace VehicleRaidFramework.VehicleMapFramework
     /// </summary>
     public static class VRF_GravshipPresetUtility
     {
+        public static System.Reflection.PropertyInfo GetPropertySafe(System.Type type, string name)
+        {
+            if (type == null) return null;
+            System.Type current = type;
+            while (current != null && current != typeof(object))
+            {
+                var prop = current.GetProperty(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly);
+                if (prop != null) return prop;
+                current = current.BaseType;
+            }
+            return null;
+        }
+
+        public static System.Reflection.FieldInfo GetFieldSafe(System.Type type, string name)
+        {
+            if (type == null) return null;
+            System.Type current = type;
+            while (current != null && current != typeof(object))
+            {
+                var field = current.GetField(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly);
+                if (field != null) return field;
+                current = current.BaseType;
+            }
+            return null;
+        }
+
         public static bool IsVMFActive => ModsConfig.OdysseyActive && LoadedModManager.RunningModsListForReading.Any(m => m.PackageIdPlayerFacing.ToLower().Contains("vehiclemap") || m.Name.ToLower().Contains("vehicle map"));
 
         public static string PresetsFolder => Path.Combine(GenFilePaths.ConfigFolderPath, "VehicleRaidFramework", "GravshipPresets");
@@ -429,18 +455,20 @@ namespace VehicleRaidFramework.VehicleMapFramework
                         float stored   = 0f;
                         try
                         {
-                            var propsProp = compType.GetProperty("Props");
-                            if (propsProp != null)
+                            object storageProps = comp.props ?? GetPropertySafe(compType, "Props")?.GetValue(comp);
+                            if (storageProps != null)
                             {
-                                var storageProps = propsProp.GetValue(comp);
-                                var capField = storageProps?.GetType().GetProperty("storageCapacity");
-                                if (capField != null)
-                                    capacity = (float)capField.GetValue(storageProps);
+                                var capProp = GetPropertySafe(storageProps.GetType(), "storageCapacity");
+                                var capField = GetFieldSafe(storageProps.GetType(), "storageCapacity");
+                                if (capProp != null)
+                                    capacity = Convert.ToSingle(capProp.GetValue(storageProps));
+                                else if (capField != null)
+                                    capacity = Convert.ToSingle(capField.GetValue(storageProps));
                             }
 
-                            var amountProp = compType.GetProperty("AmountStored");
+                            var amountProp = GetPropertySafe(compType, "AmountStored");
                             if (amountProp != null)
-                                stored = (float)amountProp.GetValue(comp);
+                                stored = Convert.ToSingle(amountProp.GetValue(comp));
                         }
                         catch { break; }
 
@@ -449,16 +477,20 @@ namespace VehicleRaidFramework.VehicleMapFramework
                         float toAdd = capacity - stored;
                         if (toAdd > 0f)
                         {
-                            // Call AddResource(float) to fill
-                            var addMethod = compType.GetMethod("AddResource",
-                                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
-                                null, new[] { typeof(float) }, null);
-                            if (addMethod != null)
+                            try
                             {
-                                addMethod.Invoke(comp, new object[] { toAdd });
-                                totalFuelAdded += toAdd;
-                                VRF_Log.Msg($"  Filled PipeSystem tank '{t.def.defName}': +{toAdd:F0} (cap={capacity:F0})");
+                                // Call AddResource(float) to fill
+                                var addMethod = compType.GetMethod("AddResource",
+                                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                                    null, new[] { typeof(float) }, null);
+                                if (addMethod != null)
+                                {
+                                    addMethod.Invoke(comp, new object[] { toAdd });
+                                    totalFuelAdded += toAdd;
+                                    VRF_Log.Msg($"  Filled PipeSystem tank '{t.def.defName}': +{toAdd:F0} (cap={capacity:F0})");
+                                }
                             }
+                            catch { }
                         }
                         break; // only one storage comp per tank
                     }
@@ -471,19 +503,23 @@ namespace VehicleRaidFramework.VehicleMapFramework
                     bool isFuelProvider = false;
                     foreach (var comp in twcFuel.AllComps)
                     {
-                        var compType = comp.GetType();
-                        if (compType.Name != "CompGravshipFacility" && compType.Name != "CompGravshipFacilityPossibly")
-                            continue;
-                        var propsProp = compType.GetProperty("Props");
-                        if (propsProp != null)
+                        try
                         {
-                            var facProps = propsProp.GetValue(comp);
-                            var fuelField = facProps?.GetType().GetField("providesFuel",
-                                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                            if (fuelField != null && (bool)fuelField.GetValue(facProps))
-                                isFuelProvider = true;
+                            var compType = comp.GetType();
+                            if (compType.Name != "CompGravshipFacility" && compType.Name != "CompGravshipFacilityPossibly")
+                                continue;
+                            object facProps = comp.props ?? GetPropertySafe(compType, "Props")?.GetValue(comp);
+                            if (facProps != null)
+                            {
+                                var fuelField = GetFieldSafe(facProps.GetType(), "providesFuel");
+                                var fuelProp = GetPropertySafe(facProps.GetType(), "providesFuel");
+                                object fuelVal = fuelField?.GetValue(facProps) ?? fuelProp?.GetValue(facProps);
+                                if (fuelVal != null && Convert.ToBoolean(fuelVal))
+                                    isFuelProvider = true;
+                            }
+                            break;
                         }
-                        break;
+                        catch { }
                     }
                     // Fallback name-based detection
                     if (!isFuelProvider)
@@ -746,7 +782,7 @@ namespace VehicleRaidFramework.VehicleMapFramework
                             }
                             else
                             {
-                                var prop = comp.GetType().GetProperty("AmountStored", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                                var prop = GetPropertySafe(comp.GetType(), "AmountStored");
                                 if (prop != null && prop.CanWrite)
                                 {
                                     prop.SetValue(comp, amount, null);
@@ -774,7 +810,7 @@ namespace VehicleRaidFramework.VehicleMapFramework
                     {
                         if (comp.GetType().Name == "CompResourceStorage")
                         {
-                            var prop = comp.GetType().GetProperty("AmountStored", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                            var prop = GetPropertySafe(comp.GetType(), "AmountStored");
                             if (prop != null)
                             {
                                 object val = prop.GetValue(comp, null);

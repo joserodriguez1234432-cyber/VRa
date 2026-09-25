@@ -95,6 +95,23 @@ namespace VehicleRaid
         }
     }
 
+    [HarmonyPatch(typeof(global::VehicleMapFramework.VehiclePawnWithMap), nameof(global::VehicleMapFramework.VehiclePawnWithMap.DynamicDrawPhaseAt))]
+    public static class VehicleHover_VehiclePawnWithMap_DynamicDrawPhaseAt_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(global::VehicleMapFramework.VehiclePawnWithMap __instance, DrawPhase phase)
+        {
+            if (phase == (DrawPhase)2)
+            {
+                var hoverComp = __instance.GetComp<CompVehicleHover>();
+                if (hoverComp != null && hoverComp.State != HoverState.Grounded)
+                {
+                    hoverComp.DrawGravshipThrusters();
+                }
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(VehiclePawn), nameof(VehiclePawn.DynamicDrawPhaseAt))]
     public static class VehicleHover_DynamicDrawPhaseAt_Patch
     {
@@ -123,9 +140,18 @@ namespace VehicleRaid
         }
 
         [HarmonyPostfix]
-        public static void Postfix(VehiclePawn __instance, AltitudeLayer __state)
+        public static void Postfix(VehiclePawn __instance, DrawPhase phase, AltitudeLayer __state)
         {
             __instance.def.altitudeLayer = __state;
+
+            if (phase == (DrawPhase)2)
+            {
+                var hoverComp = __instance.GetComp<CompVehicleHover>();
+                if (hoverComp != null && hoverComp.State != HoverState.Grounded)
+                {
+                    hoverComp.DrawGravshipThrusters();
+                }
+            }
         }
     }
 
