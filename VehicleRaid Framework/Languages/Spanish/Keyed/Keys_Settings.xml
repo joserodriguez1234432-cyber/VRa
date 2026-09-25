@@ -163,4 +163,6 @@
   <VRF_Settings_ThrusterConfigDesc>Ajusta la velocidad que aporta cada propulsor al vuelo hover. La velocidad total de la gravinave será la suma de todos sus propulsores activos.</VRF_Settings_ThrusterConfigDesc>
   <VRF_Settings_ThrusterRange>Alcance: {0} casillas</VRF_Settings_ThrusterRange>
   <VRF_Settings_ThrusterReset>Restablecer valores</VRF_Settings_ThrusterReset>
+  <VRF_Settings_VehicleRaidChanceTitle>Probabilidad de que la raid tenga vehículos</VRF_Settings_VehicleRaidChanceTitle>
+  <VRF_Settings_Tip_VehicleRaidChance>Probabilidad porcentual (0% a 100%) de que una raid enemiga incluya vehículos en lugar de ser una raid convencional de infantería.</VRF_Settings_Tip_VehicleRaidChance>
 </LanguageData>

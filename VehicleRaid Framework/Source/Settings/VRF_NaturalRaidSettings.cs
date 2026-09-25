@@ -334,6 +334,8 @@ namespace VehicleRaidFramework
 
         public float VehiclePointsFraction = 0.5f;
 
+        public float VehicleRaidChance = 1.0f;
+
         public List<string> globalExcludedRaidStrategies = new List<string>();
 
         public bool VerboseAILogging = false;
@@ -391,6 +393,7 @@ namespace VehicleRaidFramework
             AutoFillTransportVehicles = true;
             AutoFillSiegeDropVehicles = true;
             SiegeDropOnlyOnDropRaids  = true;
+            VehicleRaidChance = 1.0f;
         }
 
         public override void ExposeData()
@@ -417,6 +420,7 @@ namespace VehicleRaidFramework
             Scribe_Values.Look(ref SiegeDropOnlyOnDropRaids, "SiegeDropOnlyOnDropRaids", true);
             Scribe_Values.Look(ref allowGlobalDropPodRaids, "allowGlobalDropPodRaids", true);
             Scribe_Values.Look(ref VehiclePointsFraction, "VehiclePointsFraction", 0.5f);
+            Scribe_Values.Look(ref VehicleRaidChance, "VehicleRaidChance", 1.0f);
             Scribe_Collections.Look(ref globalExcludedRaidStrategies, "globalExcludedRaidStrategies", LookMode.Value);
             if (globalExcludedRaidStrategies == null) globalExcludedRaidStrategies = new List<string>();
             Scribe_Values.Look(ref VerboseAILogging, "VerboseAILogging", false);

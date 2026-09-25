@@ -163,4 +163,6 @@
   <VRF_Settings_ThrusterConfigDesc>Adjust the hover speed contributed by each thruster. The total gravship speed is the sum of all active thrusters.</VRF_Settings_ThrusterConfigDesc>
   <VRF_Settings_ThrusterRange>Range: {0} tiles</VRF_Settings_ThrusterRange>
   <VRF_Settings_ThrusterReset>Reset to defaults</VRF_Settings_ThrusterReset>
+  <VRF_Settings_VehicleRaidChanceTitle>Vehicle raid spawn chance</VRF_Settings_VehicleRaidChanceTitle>
+  <VRF_Settings_Tip_VehicleRaidChance>Percentage chance (0% to 100%) for an eligible raid to include vehicles instead of standard infantry-only forces.</VRF_Settings_Tip_VehicleRaidChance>
 </LanguageData>
