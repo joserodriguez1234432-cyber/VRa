@@ -15,6 +15,46 @@ namespace VehicleRaidFramework
         private const float TooCloseRange = 10f;
         private const float WaitRange     = 22f;
 
+        private const int BoardingWaitTimeoutTicks = 360; // 6 seconds (60 ticks/sec)
+        private const int BoardingCooldownTicks    = 600; // 10 seconds ignore boarding after timeout
+
+        private static readonly Dictionary<int, int> boardingWaitStartTick   = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> boardingCooldownUntilTick = new Dictionary<int, int>();
+
+        private static bool ShouldWaitToBoard(VehiclePawn vehicle, bool hasPawnsTryingToBoard)
+        {
+            int now = Find.TickManager.TicksGame;
+            int vid = vehicle.thingIDNumber;
+
+            if (boardingCooldownUntilTick.TryGetValue(vid, out int cooldownUntil) && now < cooldownUntil)
+            {
+                boardingWaitStartTick.Remove(vid);
+                return false;
+            }
+
+            if (!hasPawnsTryingToBoard)
+            {
+                boardingWaitStartTick.Remove(vid);
+                return false;
+            }
+
+            if (!boardingWaitStartTick.TryGetValue(vid, out int startTick))
+            {
+                boardingWaitStartTick[vid] = now;
+                return true;
+            }
+
+            if (now - startTick >= BoardingWaitTimeoutTicks)
+            {
+                boardingWaitStartTick.Remove(vid);
+                boardingCooldownUntilTick[vid] = now + BoardingCooldownTicks;
+                return false;
+            }
+
+            return true;
+        }
+
+
         public override Job TryGiveJob(Pawn pawn)
         {
             if (!(pawn is VehiclePawn vehicle)) return null;
@@ -24,16 +64,28 @@ namespace VehicleRaidFramework
                 return JobMaker.MakeJob(JobDefOf.Wait_Combat, 2000, true);
 
             if (CrewManager.IsAnyPawnBoarding(vehicle))
-                return JobMaker.MakeJob(JobDefOf.Wait_Combat, 500, true);
-
-            bool hasPassengers = vehicle.AllPawnsAboard.Any(p =>
             {
-                if (p.Dead || p.Downed) return false;
-                var h = vehicle.handlers.FirstOrDefault(hh => hh.thingOwner.Contains(p));
-                if (h?.role == null) return false;
-                return (h.role.HandlingTypes & HandlingType.Movement) == 0 &&
-                       (h.role.HandlingTypes & HandlingType.Turret) == 0;
-            });
+                if (ShouldWaitToBoard(vehicle, true))
+                    return JobMaker.MakeJob(JobDefOf.Wait_Combat, 60, true);
+            }
+
+            bool hasPassengers = false;
+            foreach (Pawn p in vehicle.AllPawnsAboard)
+            {
+                if (p.Dead || p.Downed) continue;
+                VehicleRoleHandler h = null;
+                foreach (VehicleRoleHandler hh in vehicle.handlers)
+                {
+                    if (hh.thingOwner.Contains(p)) { h = hh; break; }
+                }
+                if (h?.role == null) continue;
+                if ((h.role.HandlingTypes & HandlingType.Movement) == 0 &&
+                    (h.role.HandlingTypes & HandlingType.Turret) == 0)
+                {
+                    hasPassengers = true;
+                    break;
+                }
+            }
 
             Thing enemy = FindNearestVisibleEnemy(vehicle);
 
@@ -75,6 +127,7 @@ namespace VehicleRaidFramework
                 foreach (Pawn p in vehicle.Map.mapPawns.AllPawnsSpawned)
                 {
                     if (p is VehiclePawn || p.Faction != vehicle.Faction || p.Dead || p.Downed || !p.Spawned) continue;
+                    if (p.ParentHolder is VehicleRoleHandler) continue;
                     if (p.GetLord() == vehicle.GetLord())
                     {
                         missingPassengers = true;
@@ -115,7 +168,7 @@ namespace VehicleRaidFramework
                 foreach (Pawn p in vehicle.Map.mapPawns.AllPawnsSpawned)
                 {
                     if (p is VehiclePawn || p.Faction != vehicle.Faction || p.Dead || p.Downed || !p.Spawned) continue;
-                    if (p.CurJob != null && p.CurJob.def.defName == "Board" && p.CurJob.targetA.Thing == vehicle)
+                    if (p.CurJob != null && p.CurJob.def == VRF_AIDutyDefs.Board && p.CurJob.targetA.Thing == vehicle)
                     {
                         pawnsApproaching = true;
                         continue;
@@ -133,7 +186,7 @@ namespace VehicleRaidFramework
                                 VehicleRoleHandler handler = GetPassengerOnlyHandler(vehicle, p);
                                 if (handler != null && p.CanReach(vehicle, PathEndMode.Touch, Danger.Deadly))
                                 {
-                                    JobDef boardJobDef = DefDatabase<JobDef>.GetNamed("Board", false);
+                                    JobDef boardJobDef = VRF_AIDutyDefs.Board;
                                     if (boardJobDef != null)
                                     {
                                         vehicle.GiveLoadJob(p, handler);
@@ -148,8 +201,8 @@ namespace VehicleRaidFramework
                         }
                     }
                 }
-                if (pawnsApproaching)
-                    return JobMaker.MakeJob(JobDefOf.Wait_Combat, 300, true);
+                if (pawnsApproaching && ShouldWaitToBoard(vehicle, true))
+                    return JobMaker.MakeJob(JobDefOf.Wait_Combat, 60, true);
 
                 if (vehicle.CurJobDef == JobDefOf.Wait_Combat) return null;
                 return JobMaker.MakeJob(JobDefOf.Wait_Combat, 800, true);
@@ -224,10 +277,13 @@ namespace VehicleRaidFramework
 
             candidates.Sort((a, b) => a.Value.CompareTo(b.Value));
 
-            foreach (var kvp in candidates.Take(6))
+            int checkedPaths = 0;
+            for (int i = 0; i < candidates.Count; i++)
             {
-                if (vehicle.CanReachVehicle(new LocalTargetInfo(kvp.Key), PathEndMode.OnCell, Danger.Deadly, TraverseMode.NoPassClosedDoors))
-                    return kvp.Key;
+                if (checkedPaths >= 6) break;
+                checkedPaths++;
+                if (vehicle.CanReachVehicle(new LocalTargetInfo(candidates[i].Key), PathEndMode.OnCell, Danger.Deadly, TraverseMode.NoPassClosedDoors))
+                    return candidates[i].Key;
             }
             return IntVec3.Invalid;
         }

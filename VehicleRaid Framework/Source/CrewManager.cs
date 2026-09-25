@@ -53,19 +53,19 @@ namespace VehicleRaidFramework
                 h.thingOwner.Clear();
             }
 
-            var movementHandlers = handlers
-                .Where(h => h?.role != null && (h.role.HandlingTypes & HandlingType.Movement) != 0)
-                .OrderByDescending(h => h.role.SlotsToOperate)
-                .ToList();
-            var turretHandlers = handlers
-                .Where(h => h?.role != null && (h.role.HandlingTypes & HandlingType.Turret) != 0
-                                            && (h.role.HandlingTypes & HandlingType.Movement) == 0)
-                .ToList();
-            var otherHandlers = handlers
-                .Where(h => h != null && h.role != null
-                         && (h.role.HandlingTypes & HandlingType.Movement) == 0
-                         && (h.role.HandlingTypes & HandlingType.Turret) == 0)
-                .ToList();
+            var movementHandlers = new List<VehicleRoleHandler>();
+            var turretHandlers = new List<VehicleRoleHandler>();
+            var otherHandlers = new List<VehicleRoleHandler>();
+            foreach (var h in handlers)
+            {
+                if (h?.role == null) continue;
+                bool isMovement = (h.role.HandlingTypes & HandlingType.Movement) != 0;
+                bool isTurret = (h.role.HandlingTypes & HandlingType.Turret) != 0;
+                if (isMovement) movementHandlers.Add(h);
+                else if (isTurret) turretHandlers.Add(h);
+                else otherHandlers.Add(h);
+            }
+            movementHandlers.Sort((a, b) => b.role.SlotsToOperate.CompareTo(a.role.SlotsToOperate));
 
             DistributePawns(consciousPawns, movementHandlers);
             DistributePawns(consciousPawns, turretHandlers);
@@ -99,16 +99,18 @@ namespace VehicleRaidFramework
 
         private static void DistributePawns(List<Pawn> pawns, List<VehicleRoleHandler> targetHandlers)
         {
+            int index = 0;
             foreach (var h in targetHandlers)
             {
                 if (h?.role == null) continue;
-                while (pawns.Count > 0 && h.thingOwner.Count < h.role.Slots)
+                while (index < pawns.Count && h.thingOwner.Count < h.role.Slots)
                 {
-                    Pawn p = pawns[0];
+                    Pawn p = pawns[index];
+                    index++;
                     if (p != null) h.thingOwner.TryAdd(p);
-                    pawns.RemoveAt(0);
                 }
             }
+            if (index > 0) pawns.RemoveRange(0, index);
         }
 
         private static Dictionary<VehiclePawn, int> loneDriverTicks = new Dictionary<VehiclePawn, int>();
@@ -130,7 +132,8 @@ namespace VehicleRaidFramework
                 && !VRF_TransportUtil.IsSiegeDropVehicle(vehicle))
                 return;
 
-            if (vehicle.mindState?.duty?.def != null && (vehicle.mindState.duty.def.defName == "VRF_VehicleExitMap" || vehicle.mindState.duty.def == DutyDefOf.ExitMapBest)) return;
+            DutyDef vDuty = vehicle.mindState?.duty?.def;
+            if (vDuty != null && (vDuty == VRF_AIDutyDefs.ExitMap || vDuty == DutyDefOf.ExitMapBest)) return;
 
             Lord lord = vehicle.GetLord();
             if (lord?.LordJob is LordJob_VehicleTrade || lord?.LordJob is LordJob_HelicopterTrade) return;
@@ -185,7 +188,7 @@ namespace VehicleRaidFramework
             {
                 vehicle.mindState = new Verse.AI.Pawn_MindState(vehicle);
             }
-            vehicle.mindState.duty = new PawnDuty(DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleExitMap") ?? DutyDefOf.ExitMapBest);
+            vehicle.mindState.duty = new PawnDuty(VRF_AIDutyDefs.ExitMap ?? DutyDefOf.ExitMapBest);
             Messages.Message(messageKey.Translate(vehicle.LabelShort), vehicle, MessageTypeDefOf.NeutralEvent);
         }
 
@@ -295,7 +298,11 @@ namespace VehicleRaidFramework
 
         private static bool HasFuelInInventory(VehiclePawn vehicle)
         {
-            return CompFueledTravel.AllFuelFromInventory(vehicle).Any();
+            foreach (Thing fuel in CompFueledTravel.AllFuelFromInventory(vehicle))
+            {
+                return true;
+            }
+            return false;
         }
 
         public static void CheckAbandonment(VehiclePawn vehicle)
@@ -307,6 +314,9 @@ namespace VehicleRaidFramework
 
             if (VRF_TransportUtil.IsSiegeDropVehicle(vehicle)) return;
             if (IsGravshipVehicle(vehicle)) return;
+
+            var hoverComp = vehicle.GetComp<VehicleRaid.CompVehicleHover>();
+            if (hoverComp != null && hoverComp.IsAirborne) return;
 
             if (!CanMove(vehicle))
             {
@@ -429,12 +439,13 @@ namespace VehicleRaidFramework
 
         public static bool IsAnyPawnBoarding(VehiclePawn vehicle)
         {
-            if (vehicle.Map == null) return false;
+            if (vehicle?.Map == null || !vehicle.Spawned) return false;
             var mapPawns = vehicle.Map.mapPawns.AllPawnsSpawned;
             for (int i = 0; i < mapPawns.Count; i++)
             {
                 Pawn p = mapPawns[i];
-                if (p.CurJob != null && p.CurJob.def.defName == "Board" && p.CurJob.targetA.Thing == vehicle)
+                if (p == vehicle || p is VehiclePawn || p.Dead || p.Downed || !p.Spawned) continue;
+                if (p.CurJob != null && p.CurJob.def == VRF_AIDutyDefs.Board && p.CurJob.targetA.Thing == vehicle)
                 {
                     return true;
                 }
@@ -463,9 +474,9 @@ namespace VehicleRaidFramework
     [HarmonyPatch(typeof(Pawn_HealthTracker), "MakeDowned")]
     public static class Patch_CrewDowned
     {
-        public static void Postfix(Pawn_HealthTracker __instance)
+        public static void Postfix(Pawn_HealthTracker __instance, Pawn ___pawn)
         {
-            Pawn pawn = Traverse.Create(__instance).Field("pawn").GetValue<Pawn>();
+            Pawn pawn = ___pawn;
             if (pawn?.ParentHolder is VehicleRoleHandler handler)
             {
                 if (CrewManager.IsGravshipVehicle(handler.vehicle)) return;
@@ -477,7 +488,33 @@ namespace VehicleRaidFramework
             }
         }
     }
+
+    [HarmonyPatch(typeof(KidnapAIUtility), nameof(KidnapAIUtility.TryFindGoodKidnapVictim))]
+    public static class Patch_KidnapAIUtility_VehicleIgnore
+    {
+        public static bool Prefix(Pawn kidnapper, ref bool __result, ref Pawn victim)
+        {
+            if (kidnapper is VehiclePawn || kidnapper?.health?.capacities == null)
+            {
+                victim = null;
+                __result = false;
+                return false;
+            }
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(KidnapAIUtility), nameof(KidnapAIUtility.ReachableWoundedGuest))]
+    public static class Patch_ReachableWoundedGuest_VehicleIgnore
+    {
+        public static bool Prefix(Pawn searcher, ref Pawn __result)
+        {
+            if (searcher is VehiclePawn || searcher?.health?.capacities == null)
+            {
+                __result = null;
+                return false;
+            }
+            return true;
+        }
+    }
 }
-
-
-

@@ -60,7 +60,13 @@ namespace VehicleRaidFramework
             entries[key] = new ReachabilityValue(now, canReach);
 
             if (entries.Count > MaxEntries)
+            {
                 RemoveStale(now);
+                // If every entry is still fresh the cache would keep growing; drop it
+                // instead of scanning an oversized table on every call.
+                if (entries.Count > MaxEntries)
+                    entries.Clear();
+            }
             return canReach;
         }
 
@@ -134,6 +140,13 @@ namespace VehicleRaidFramework
 
         private VRF_NaturalRaidBehavior raidBehavior = VRF_NaturalRaidBehavior.ImmediateAssault;
         private int holdTicks = 0;
+
+        // Persisted state owned by the LordJob because LordToil has no ExposeData
+        // to override; these fields ride along with the lord's own save data.
+        public int exitToilStartTick = -1;
+        public IntVec3 savedHoldSpot = IntVec3.Invalid;
+        public Dictionary<int, IntVec3> savedVehicleSlots;
+        public Dictionary<int, float> savedAirplaneOrbitAngles;
 
         public LordJob_VehicleRaid() { }
 
@@ -240,6 +253,15 @@ namespace VehicleRaidFramework
             Scribe_References.Look(ref naturalRaidLord, "naturalRaidLord");
             Scribe_Values.Look(ref raidBehavior, "raidBehavior", VRF_NaturalRaidBehavior.ImmediateAssault);
             Scribe_Values.Look(ref holdTicks,    "holdTicks",    0);
+            Scribe_Values.Look(ref exitToilStartTick, "exitToilStartTick", -1);
+            Scribe_Values.Look(ref savedHoldSpot, "savedHoldSpot", IntVec3.Invalid);
+            Scribe_Collections.Look(ref savedVehicleSlots, "savedVehicleSlots", LookMode.Value, LookMode.Value);
+            Scribe_Collections.Look(ref savedAirplaneOrbitAngles, "savedAirplaneOrbitAngles", LookMode.Value, LookMode.Value);
+            if (Scribe.mode == LoadSaveMode.PostLoadInit)
+            {
+                if (savedVehicleSlots == null) savedVehicleSlots = new Dictionary<int, IntVec3>();
+                if (savedAirplaneOrbitAngles == null) savedAirplaneOrbitAngles = new Dictionary<int, float>();
+            }
         }
     }
 
@@ -256,6 +278,8 @@ namespace VehicleRaidFramework
 
         private const int GracePeriodTicks = 300;
 
+        private static readonly List<Pawn> pawnsToRemoveScratch = new List<Pawn>();
+
         public override void UpdateAllDuties()
         {
             var vJob = this.lord.LordJob as LordJob_VehicleRaid;
@@ -266,11 +290,17 @@ namespace VehicleRaidFramework
                 var leaderManager = this.lord.Map.GetComponent<VRF_LeaderManager>();
                 leaderManager?.ForceRefresh();
 
-                bool hasTransport = this.lord.ownedPawns.Any(lp =>
-                    lp is VehiclePawn tv &&
-                    !tv.Dead &&
-                    (VRF_TransportUtil.IsTransportVehicle(tv) || VRF_TransportUtil.IsArmedTransportVehicle(tv)) &&
-                    VRF_TransportUtil.HasPassengerOnlySlots(tv));
+                bool hasTransport = false;
+                foreach (Pawn lp in this.lord.ownedPawns)
+                {
+                    if (lp is VehiclePawn tv && !tv.Dead &&
+                        (VRF_TransportUtil.IsTransportVehicle(tv) || VRF_TransportUtil.IsArmedTransportVehicle(tv)) &&
+                        VRF_TransportUtil.HasPassengerOnlySlots(tv))
+                    {
+                        hasTransport = true;
+                        break;
+                    }
+                }
 
                 Lord naturalRaidLord = vJob?.naturalRaidLord;
                 bool isStagingOrSieging = false;
@@ -294,7 +324,8 @@ namespace VehicleRaidFramework
                     }
                 }
 
-                List<Pawn> pawnsToRemove = new List<Pawn>();
+                pawnsToRemoveScratch.Clear();
+                List<Pawn> pawnsToRemove = pawnsToRemoveScratch;
                 int nowTick = Find.TickManager.TicksGame;
 
                 foreach (Pawn pawn in this.lord.ownedPawns)
@@ -307,7 +338,7 @@ namespace VehicleRaidFramework
                             continue;
                         }
 
-                        if (v.mindState.duty?.def.defName == "VRF_VehicleExitMap" || v.mindState.duty?.def == DutyDefOf.ExitMapBest)
+                        if (v.mindState.duty?.def == VRF_AIDutyDefs.ExitMap || v.mindState.duty?.def == DutyDefOf.ExitMapBest)
                             continue;
 
                         bool isSiegeDrop = VRF_TransportUtil.IsSiegeDropVehicle(v);
@@ -416,8 +447,29 @@ namespace VehicleRaidFramework
     {
         public override bool AllowSatisfyLongNeeds => false;
 
-        public int ExitToilStartTick = -1;
+        // Stored on the LordJob (which saves its data) so the takeoff timer
+        // survives save/load; LordToil itself has no ExposeData to override.
+        private int exitToilStartTickLocal = -1;
+
+        public int ExitToilStartTick
+        {
+            get
+            {
+                LordJob_VehicleRaid vJob = lord != null ? lord.LordJob as LordJob_VehicleRaid : null;
+                return vJob != null ? vJob.exitToilStartTick : exitToilStartTickLocal;
+            }
+            set
+            {
+                exitToilStartTickLocal = value;
+                LordJob_VehicleRaid vJob = lord != null ? lord.LordJob as LordJob_VehicleRaid : null;
+                if (vJob != null) vJob.exitToilStartTick = value;
+            }
+        }
+
         public const int MinTicksBeforeExit = 300;
+
+        private static readonly List<Pawn> pawnsToRemoveScratch = new List<Pawn>();
+        private readonly List<Pawn> outsideGuardsScratch = new List<Pawn>();
 
         public override void Init()
         {
@@ -450,24 +502,36 @@ namespace VehicleRaidFramework
                         }
                     }
 
-                    LordToil newLordToil = otherLord.Graph?.lordToils?.FirstOrDefault(st => st is LordToil_PanicFlee);
-                    if (newLordToil != null)
+                    List<LordToil> graphToils = otherLord.Graph?.lordToils;
+                    if (graphToils != null)
                     {
-                        otherLord.GotoToil(newLordToil);
-                    }
-                    else
-                    {
-                        LordToil exitToil = otherLord.Graph?.lordToils?.FirstOrDefault(st =>
-                            st.GetType().Name.Contains("Exit") ||
-                            st.GetType().Name.Contains("Leave") ||
-                            st.GetType().Name.Contains("Flee") ||
-                            st.GetType().Name.Contains("Escape") ||
-                            st.GetType().Name.Contains("Steal") ||
-                            st.GetType().Name.Contains("Kidnap"));
-                        if (exitToil != null)
+                        LordToil newLordToil = null;
+                        LordToil exitToil = null;
+                        foreach (LordToil st in graphToils)
                         {
-                            otherLord.GotoToil(exitToil);
+                            if (st is LordToil_PanicFlee)
+                            {
+                                newLordToil = st;
+                                break;
+                            }
+
+                            if (exitToil == null)
+                            {
+                                string stName = st.GetType().Name;
+                                if (stName.Contains("Exit") || stName.Contains("Leave") ||
+                                    stName.Contains("Flee") || stName.Contains("Escape") ||
+                                    stName.Contains("Steal") || stName.Contains("Kidnap"))
+                                {
+                                    exitToil = st;
+                                }
+                            }
                         }
+
+                        // Keep vanilla priority: explicit panic-flee first, exit-like toil as fallback.
+                        if (newLordToil != null)
+                            otherLord.GotoToil(newLordToil);
+                        else if (exitToil != null)
+                            otherLord.GotoToil(exitToil);
                     }
                 }
             }
@@ -493,7 +557,9 @@ namespace VehicleRaidFramework
 
             try
             {
-                List<Pawn> pawnsToRemove = new List<Pawn>();
+                pawnsToRemoveScratch.Clear();
+                List<Pawn> pawnsToRemove = pawnsToRemoveScratch;
+                bool allyInfantryInLord = HasAllyInfantryInLord(this.lord);
 
                 foreach (Pawn pawn in this.lord.ownedPawns)
                 {
@@ -511,11 +577,11 @@ namespace VehicleRaidFramework
                             {
                                 vehicleDuty = VRF_AIDutyDefs.ExitMap ?? DutyDefOf.ExitMapBest;
                             }
-                            else if (VRF_TransportUtil.IsTransportVehicle(v) && HasAllyInfantryInLord(this.lord))
+                            else if (VRF_TransportUtil.IsTransportVehicle(v) && allyInfantryInLord)
                             {
                                 vehicleDuty = VRF_AIDutyDefs.Transport;
                             }
-                            else if (VRF_TransportUtil.IsArmedTransportVehicle(v) && HasAllyInfantryInLord(this.lord))
+                            else if (VRF_TransportUtil.IsArmedTransportVehicle(v) && allyInfantryInLord)
                             {
                                 vehicleDuty = VRF_AIDutyDefs.ArmedTransport ?? VRF_AIDutyDefs.ExitMap ?? DutyDefOf.ExitMapBest;
                             }
@@ -542,7 +608,12 @@ namespace VehicleRaidFramework
                                 if (!(lp is VehiclePawn vp)) continue;
                                 if (!VRF_TransportUtil.IsSiegeDropVehicle(vp)) continue;
                                 if (!vp.Spawned) continue;
-                                if (vp.handlers.Any(h => h?.role != null && h.AreSlotsAvailable))
+                                bool hasFreeSlot = false;
+                                foreach (VehicleRoleHandler handler in vp.handlers)
+                                {
+                                    if (handler?.role != null && handler.AreSlotsAvailable) { hasFreeSlot = true; break; }
+                                }
+                                if (hasFreeSlot)
                                 {
                                     targetPod = vp;
                                     break;
@@ -601,6 +672,17 @@ namespace VehicleRaidFramework
         {
             if (Find.TickManager.TicksGame % 60 != 0) return;
 
+            // Collect outside guards once per tick instead of once per siege-drop vehicle.
+            outsideGuardsScratch.Clear();
+            foreach (Pawn other in this.lord.ownedPawns)
+            {
+                if (other is VehiclePawn) continue;
+                if (other.Dead || other.Downed) continue;
+                if (!other.Spawned) continue;
+                if (other.ParentHolder is VehicleRoleHandler) continue;
+                outsideGuardsScratch.Add(other);
+            }
+
             foreach (Pawn pawn in this.lord.ownedPawns)
             {
                 if (!(pawn is VehiclePawn pod)) continue;
@@ -618,12 +700,9 @@ namespace VehicleRaidFramework
                     continue;
 
                 bool anyGuardStillOutside = false;
-                foreach (Pawn other in this.lord.ownedPawns)
+                foreach (Pawn other in outsideGuardsScratch)
                 {
-                    if (other is VehiclePawn) continue;
-                    if (other.Dead || other.Downed) continue;
-                    if (!other.Spawned || other.Map != pod.Map) continue;
-                    if (other.ParentHolder is VehicleRoleHandler) continue;
+                    if (other.Map != pod.Map) continue;
                     anyGuardStillOutside = true;
                     break;
                 }
@@ -646,6 +725,9 @@ namespace VehicleRaidFramework
     {
         private const int WallBaseCost = 100;
         private const float WallHpCost = 0.1f;
+
+        private static readonly Dictionary<int, PathFinderCostTuning> tuningCache =
+            new Dictionary<int, PathFinderCostTuning>();
 
         public override Job TryGiveJob(Pawn pawn)
         {
@@ -701,13 +783,17 @@ namespace VehicleRaidFramework
             Thing wallToBreak = null;
             bool pathFound = false;
             List<IntVec3> pathNodes = null;
-            PathFinderCostTuning tuning = new PathFinderCostTuning
+            if (!tuningCache.TryGetValue(widthMultiplier, out PathFinderCostTuning tuning))
             {
-                costBlockedDoor = WallBaseCost * widthMultiplier,
-                costBlockedWallBase = WallBaseCost * widthMultiplier,
-                costBlockedDoorPerHitPoint = WallHpCost * widthMultiplier,
-                costBlockedWallExtraPerHitPoint = WallHpCost * widthMultiplier
-            };
+                tuning = new PathFinderCostTuning
+                {
+                    costBlockedDoor = WallBaseCost * widthMultiplier,
+                    costBlockedWallBase = WallBaseCost * widthMultiplier,
+                    costBlockedDoorPerHitPoint = WallHpCost * widthMultiplier,
+                    costBlockedWallExtraPerHitPoint = WallHpCost * widthMultiplier
+                };
+                tuningCache[widthMultiplier] = tuning;
+            }
             using (PawnPath path = pawn.Map.pathFinder.FindPathNow(pawn.Position, new LocalTargetInfo(enemy.Position), TraverseParms.For(pawn, Danger.Deadly, TraverseMode.PassAllDestroyableThings), tuning))
             {
                 pathFound = path.Found;
@@ -1027,6 +1113,7 @@ namespace VehicleRaidFramework
             var allyDestinations = new List<KeyValuePair<IntVec3, int>>();
             float distVehicleToTarget = vehicle.Position.DistanceTo(target.Position);
             bool tooClose = distVehicleToTarget < minRange + 1f;
+            float minRangeSq = (minRange + 1f) * (minRange + 1f);
 
             // Vehicle Framework already maintains this exact map-local list. Avoid walking
             // every colonist, raider, animal, and pawn aboard a vehicle for each AI decision.
@@ -1055,8 +1142,9 @@ namespace VehicleRaidFramework
             {
                 if (cellsChecked++ > maxCells) break;
 
-                float distToTarget = cell.DistanceTo(target.Position);
-                if (distToTarget < minRange + 1f || !cell.Standable(map) || !GenSight.LineOfSight(cell, target.Position, map)) continue;
+                float distToTargetSq = cell.DistanceToSquared(target.Position);
+                if (distToTargetSq < minRangeSq || !cell.Standable(map) || !GenSight.LineOfSight(cell, target.Position, map)) continue;
+                float distToTarget = Mathf.Sqrt(distToTargetSq);
 
                 bool insideAlly = false;
                 for (int i = 0; i < allyRects.Count; i++)
@@ -1289,6 +1377,8 @@ namespace VehicleRaidFramework
 
             float currentDist = vehicle.Position.DistanceTo(target.Position);
             bool tooClose = currentDist < minRange + 1f;
+            float minRangeSq = (minRange + 1f) * (minRange + 1f);
+            float maxRangeSq = maxRange * maxRange;
 
             Vector3 baseDir = tooClose ? -idealFacing : idealFacing;
 
@@ -1303,8 +1393,8 @@ namespace VehicleRaidFramework
                     if (!candidate.InBounds(map) || !candidate.Standable(map)) continue;
                     if (candidate == vehicle.Position) continue;
 
-                    float distToTarget = candidate.DistanceTo(target.Position);
-                    if (distToTarget < minRange + 1f || distToTarget > maxRange) continue;
+                    float distToTargetSq = candidate.DistanceToSquared(target.Position);
+                    if (distToTargetSq < minRangeSq || distToTargetSq > maxRangeSq) continue;
 
                     bool vehicleBlocked = false;
                     foreach (Thing t in candidate.GetThingList(map))
@@ -1326,6 +1416,8 @@ namespace VehicleRaidFramework
             Map map = vehicle.Map;
             Vector3 awayFromThreat = (vehicle.DrawPos - threat.DrawPos).normalized;
 
+            float minRangeSq = (minRange + 1f) * (minRange + 1f);
+            float maxRangeSq = maxRange * maxRange;
             var candidates = new List<KeyValuePair<IntVec3, float>>();
 
             for (int i = 0; i < 16; i++)
@@ -1339,8 +1431,9 @@ namespace VehicleRaidFramework
                     if (!candidate.InBounds(map) || !candidate.Standable(map)) continue;
                     if (candidate == vehicle.Position) continue;
 
-                    float distToThreat = candidate.DistanceTo(threat.Position);
-                    if (distToThreat < minRange + 1f || distToThreat > maxRange) continue;
+                    float distToThreatSq = candidate.DistanceToSquared(threat.Position);
+                    if (distToThreatSq < minRangeSq || distToThreatSq > maxRangeSq) continue;
+                    float distToThreat = Mathf.Sqrt(distToThreatSq);
 
                     bool vehicleBlocked = false;
                     foreach (Thing t in candidate.GetThingList(map))
@@ -1451,8 +1544,8 @@ namespace VehicleRaidFramework
     {
         private IntVec3 holdSpot = IntVec3.Invalid;
 
-        private readonly Dictionary<int, IntVec3> vehicleSlots = new Dictionary<int, IntVec3>();
-        private readonly Dictionary<int, float> airplaneOrbitAngles = new Dictionary<int, float>();
+        private Dictionary<int, IntVec3> vehicleSlots = new Dictionary<int, IntVec3>();
+        private Dictionary<int, float> airplaneOrbitAngles = new Dictionary<int, float>();
         private readonly List<IntVec3> takenSlotsScratch = new List<IntVec3>();
 
         private const float InfantryDefendRadius = 28f;
@@ -1467,7 +1560,22 @@ namespace VehicleRaidFramework
         public override void Init()
         {
             base.Init();
-            holdSpot = ComputeHoldSpot();
+
+            // Restore persisted hold state from the LordJob (LordToil has no
+            // ExposeData to override, so the LordJob carries it through save/load).
+            LordJob_VehicleRaid vJob = this.lord != null ? this.lord.LordJob as LordJob_VehicleRaid : null;
+            if (vJob != null)
+            {
+                if (vJob.savedVehicleSlots != null) vehicleSlots = vJob.savedVehicleSlots;
+                if (vJob.savedAirplaneOrbitAngles != null) airplaneOrbitAngles = vJob.savedAirplaneOrbitAngles;
+                if (vJob.savedHoldSpot.IsValid) holdSpot = vJob.savedHoldSpot;
+            }
+
+            if (!holdSpot.IsValid)
+                holdSpot = ComputeHoldSpot();
+
+            if (vJob != null) vJob.savedHoldSpot = holdSpot;
+
             LessonAutoActivator.TeachOpportunity(ConceptDefOf.Drafting, OpportunityType.Critical);
         }
 
@@ -1527,6 +1635,7 @@ namespace VehicleRaidFramework
 
             int   vHalf  = Mathf.Max(vehicle.def.size.x, vehicle.def.size.z) / 2 + 1;
             float minSep = Mathf.Max(SlotSeparation, vHalf * 2f + 2f);
+            float minSepSq = minSep * minSep;
 
             for (float radius = minSep; radius <= 40f; radius += minSep)
             {
@@ -1549,7 +1658,7 @@ namespace VehicleRaidFramework
                     bool tooClose = false;
                     foreach (IntVec3 taken in takenSlots)
                     {
-                        if (candidate.DistanceTo(taken) < minSep) { tooClose = true; break; }
+                        if (candidate.DistanceToSquared(taken) < minSepSq) { tooClose = true; break; }
                     }
                     if (tooClose) continue;
 
@@ -1564,7 +1673,11 @@ namespace VehicleRaidFramework
         public override void UpdateAllDuties()
         {
             if (!holdSpot.IsValid)
+            {
                 holdSpot = ComputeHoldSpot();
+                LordJob_VehicleRaid vJobSpot = this.lord != null ? this.lord.LordJob as LordJob_VehicleRaid : null;
+                if (vJobSpot != null) vJobSpot.savedHoldSpot = holdSpot;
+            }
 
             if (VRF_Log.Enabled)
                 Log.Message($"[VRF_Debug] LordToil_VehicleHoldPosition.UpdateAllDuties — lord={this.lord?.faction?.def?.defName} holdSpot={holdSpot} pawnCount={this.lord?.ownedPawns?.Count}");
@@ -1583,7 +1696,7 @@ namespace VehicleRaidFramework
                     if (pawn is VehiclePawn v)
                     {
                         if (v.mindState.duty?.def == DutyDefOf.ExitMapBest ||
-                            v.mindState.duty?.def?.defName == "VRF_VehicleExitMap")
+                            v.mindState.duty?.def == VRF_AIDutyDefs.ExitMap)
                             continue;
 
                         if (!vehicleSlots.TryGetValue(v.thingIDNumber, out IntVec3 slot) || !slot.IsValid)
@@ -1706,8 +1819,8 @@ namespace VehicleRaidFramework
                     if (hoverComp == null || !hoverComp.IsAirborne) continue;
                     if (hoverComp.FlightType != VehicleRaid.FlightType.Airplane) continue;
 
-                    if (v.mindState.duty?.def?.defName != "VRF_VehicleHoldStrict" &&
-                        v.mindState.duty?.def?.defName != "VRF_VehicleDefendBase") continue;
+                    DutyDef orbitDutyDef = v.mindState.duty?.def;
+                    if (orbitDutyDef != VRF_AIDutyDefs.HoldStrict && orbitDutyDef != VRF_AIDutyDefs.DefendBase) continue;
 
                     IntVec3 orbitCenter = vehicleSlots.TryGetValue(v.thingIDNumber, out IntVec3 s) && s.IsValid
                         ? s : (holdSpot.IsValid ? holdSpot : v.Position);
@@ -1788,7 +1901,7 @@ namespace VehicleRaidFramework
             {
                 if (!(pawn is VehiclePawn v)) continue;
                 if (!v.Spawned || v.Dead || !CrewManager.CanMove(v)) continue;
-                if (v.mindState.duty?.def?.defName == "VRF_VehicleExitMap") continue;
+                if (v.mindState.duty?.def == VRF_AIDutyDefs.ExitMap) continue;
 
                 IntVec3 target = vehicleSlots.TryGetValue(v.thingIDNumber, out IntVec3 s) && s.IsValid
                     ? s : holdSpot;
@@ -1804,12 +1917,15 @@ namespace VehicleRaidFramework
                     {
                         Vector2 realPos = hoverComp.realPos;
                         Vector2 targetV2 = new Vector2(target.x + 0.5f, target.z + 0.5f);
-                        float dist = Vector2.Distance(realPos, targetV2);
-                        if (dist > 4f)
+                        float distSq = (realPos - targetV2).sqrMagnitude;
+                        if (distSq > 16f)
                         {
                             hoverComp.SetTarget(target.ToVector3Shifted());
                             if (VRF_Log.Enabled)
+                            {
+                                float dist = Mathf.Sqrt(distSq);
                                 Log.Message($"[VRF_Debug] HoldTick — redirecting hover {v.LabelShort} back to slot={target} (dist={dist:F1})");
+                            }
                         }
                     }
                 }

@@ -18,6 +18,69 @@ namespace VehicleRaidFramework
         private const int   DisembarkWaitTicks = 600;
 
         private static readonly Dictionary<int, int> lastDisembarkBeganTick = new Dictionary<int, int>();
+        private static int disembarkTimerCleanupTick;
+
+        private static void PruneDisembarkTimers()
+        {
+            int now = Find.TickManager.TicksGame;
+            if (now < disembarkTimerCleanupTick) return;
+            disembarkTimerCleanupTick = now + 30000;
+
+            List<int> stale = null;
+            foreach (KeyValuePair<int, int> entry in lastDisembarkBeganTick)
+            {
+                if (now - entry.Value > 30000)
+                {
+                    if (stale == null) stale = new List<int>();
+                    stale.Add(entry.Key);
+                }
+            }
+            if (stale != null)
+            {
+                foreach (int key in stale) lastDisembarkBeganTick.Remove(key);
+            }
+        }
+
+        private const int BoardingWaitTimeoutTicks = 360; // 6 seconds (60 ticks/sec)
+        private const int BoardingCooldownTicks    = 600; // 10 seconds ignore boarding after timeout
+
+        private static readonly Dictionary<int, int> boardingWaitStartTick   = new Dictionary<int, int>();
+        private static readonly Dictionary<int, int> boardingCooldownUntilTick = new Dictionary<int, int>();
+
+        private static bool ShouldWaitToBoard(VehiclePawn vehicle, bool hasPawnsTryingToBoard)
+        {
+            int now = Find.TickManager.TicksGame;
+            int vid = vehicle.thingIDNumber;
+
+            if (boardingCooldownUntilTick.TryGetValue(vid, out int cooldownUntil) && now < cooldownUntil)
+            {
+                boardingWaitStartTick.Remove(vid);
+                return false; // Timed out recently: do not wait, start moving!
+            }
+
+            if (!hasPawnsTryingToBoard)
+            {
+                boardingWaitStartTick.Remove(vid);
+                return false;
+            }
+
+            if (!boardingWaitStartTick.TryGetValue(vid, out int startTick))
+            {
+                boardingWaitStartTick[vid] = now;
+                return true; // Start waiting
+            }
+
+            if (now - startTick >= BoardingWaitTimeoutTicks)
+            {
+                // 6 seconds reached with no one boarding! Give up waiting and move
+                boardingWaitStartTick.Remove(vid);
+                boardingCooldownUntilTick[vid] = now + BoardingCooldownTicks;
+                return false;
+            }
+
+            return true; // Still within 6 seconds window
+        }
+
 
         private static void MarkDisembarkBegan(VehiclePawn vehicle)
         {
@@ -40,6 +103,8 @@ namespace VehicleRaidFramework
             if (!(pawn is VehiclePawn vehicle)) return null;
             if (!vehicle.Spawned || vehicle.Map == null) return null;
 
+            PruneDisembarkTimers();
+
             if (vehicle.VehicleDef.type == VehicleType.Sea)
             {
                 return JobGiver_SeaVehicleMove.TryGiveSeaVehicleJob(vehicle, FindNearestVisibleEnemy(vehicle));
@@ -49,16 +114,28 @@ namespace VehicleRaidFramework
                 return JobMaker.MakeJob(JobDefOf.Wait_Combat, 2000, true);
 
             if (CrewManager.IsAnyPawnBoarding(vehicle))
-                return JobMaker.MakeJob(JobDefOf.Wait_Combat, 500, true);
-
-            bool hasPassengers = vehicle.AllPawnsAboard.Any(p =>
             {
-                if (p.Dead || p.Downed) return false;
-                var h = vehicle.handlers.FirstOrDefault(hh => hh.thingOwner.Contains(p));
-                if (h?.role == null) return false;
-                return (h.role.HandlingTypes & HandlingType.Movement) == 0 &&
-                       (h.role.HandlingTypes & HandlingType.Turret) == 0;
-            });
+                if (ShouldWaitToBoard(vehicle, true))
+                    return JobMaker.MakeJob(JobDefOf.Wait_Combat, 60, true);
+            }
+
+            bool hasPassengers = false;
+            foreach (Pawn p in vehicle.AllPawnsAboard)
+            {
+                if (p.Dead || p.Downed) continue;
+                VehicleRoleHandler h = null;
+                foreach (VehicleRoleHandler hh in vehicle.handlers)
+                {
+                    if (hh.thingOwner.Contains(p)) { h = hh; break; }
+                }
+                if (h?.role == null) continue;
+                if ((h.role.HandlingTypes & HandlingType.Movement) == 0 &&
+                    (h.role.HandlingTypes & HandlingType.Turret) == 0)
+                {
+                    hasPassengers = true;
+                    break;
+                }
+            }
 
             Thing enemy = FindNearestVisibleEnemy(vehicle);
 
@@ -118,7 +195,7 @@ namespace VehicleRaidFramework
                     if (p is VehiclePawn || p.Faction != vehicle.Faction || p.Dead || p.Downed || !p.Spawned) continue;
                     if (p.ParentHolder is VehicleRoleHandler) continue;
 
-                    if (p.CurJob != null && p.CurJob.def.defName == "Board" && p.CurJob.targetA.Thing == vehicle)
+                    if (p.CurJob != null && p.CurJob.def == VRF_AIDutyDefs.Board && p.CurJob.targetA.Thing == vehicle)
                     {
                         pawnsApproaching = true;
                         continue;
@@ -137,7 +214,7 @@ namespace VehicleRaidFramework
                                 VehicleRoleHandler handler = VRF_TransportUtil.GetPassengerHandler(vehicle, p);
                                 if (handler != null && p.CanReach(vehicle, PathEndMode.Touch, Danger.Deadly))
                                 {
-                                    JobDef boardJobDef = DefDatabase<JobDef>.GetNamed("Board", false);
+                                    JobDef boardJobDef = VRF_AIDutyDefs.Board;
                                     if (boardJobDef != null)
                                     {
                                         vehicle.GiveLoadJob(p, handler);
@@ -153,16 +230,19 @@ namespace VehicleRaidFramework
                     }
                 }
 
-                if (pawnsApproaching)
-                    return JobMaker.MakeJob(JobDefOf.Wait_Combat, 300, true);
+                if (pawnsApproaching && ShouldWaitToBoard(vehicle, true))
+                    return JobMaker.MakeJob(JobDefOf.Wait_Combat, 60, true);
 
-                Pawn squadPawn = vehicle.Map.mapPawns.AllPawnsSpawned.FirstOrDefault(p =>
-                    p != vehicle && !(p is VehiclePawn) &&
-                    p.Faction == vehicle.Faction && !p.Dead && !p.Downed &&
-                    !(p.ParentHolder is VehicleRoleHandler) &&
-                    p.GetLord() == vehicle.GetLord() &&
-                    p.Position.DistanceTo(vehicle.Position) > 20f &&
-                    p.Position.DistanceTo(vehicle.Position) <= 45f);
+                Pawn squadPawn = null;
+                foreach (Pawn p in vehicle.Map.mapPawns.AllPawnsSpawned)
+                {
+                    if (p == vehicle || p is VehiclePawn) continue;
+                    if (p.Faction != vehicle.Faction || p.Dead || p.Downed) continue;
+                    if (p.ParentHolder is VehicleRoleHandler) continue;
+                    if (p.GetLord() != vehicle.GetLord()) continue;
+                    float squadDist = p.Position.DistanceTo(vehicle.Position);
+                    if (squadDist > 20f && squadDist <= 45f) { squadPawn = p; break; }
+                }
 
                 if (squadPawn != null)
                 {
@@ -192,13 +272,18 @@ namespace VehicleRaidFramework
                 {
                     bool allSeatsFull = !VRF_TransportUtil.HasAvailablePassengerSlots(vehicle);
 
-                    bool anyPendingPassenger = !allSeatsFull && vehicle.Map.mapPawns.AllPawnsSpawned.Any(p =>
-                        !(p is VehiclePawn) &&
-                        p.Faction == vehicle.Faction &&
-                        !p.Dead && !p.Downed && p.Spawned &&
-                        !(p.ParentHolder is VehicleRoleHandler) &&
-                        p.GetLord() == vehicle.GetLord() &&
-                        VRF_TransportUtil.GetPassengerHandler(vehicle, p) != null);
+                    bool anyPendingPassenger = false;
+                    if (!allSeatsFull)
+                    {
+                        foreach (Pawn p in vehicle.Map.mapPawns.AllPawnsSpawned)
+                        {
+                            if (p is VehiclePawn) continue;
+                            if (p.Faction != vehicle.Faction || p.Dead || p.Downed || !p.Spawned) continue;
+                            if (p.ParentHolder is VehicleRoleHandler) continue;
+                            if (p.GetLord() != vehicle.GetLord()) continue;
+                            if (VRF_TransportUtil.GetPassengerHandler(vehicle, p) != null) { anyPendingPassenger = true; break; }
+                        }
+                    }
 
                     if (!anyPendingPassenger)
                         ClearDisembarkTimer(vehicle);
