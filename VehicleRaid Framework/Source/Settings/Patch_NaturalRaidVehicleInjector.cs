@@ -78,14 +78,6 @@ namespace VehicleRaidFramework
             {
                 PawnKindDef kind = DefDatabase<PawnKindDef>.GetNamedSilentFail(e.vehicleKindDefName);
                 if (kind == null || !(kind.race is VehicleDef vdef)) continue;
-                if (e.minRaidPoints > 0f && parms.points < e.minRaidPoints) continue;
-                if (e.maxRaidPoints > 0f && parms.points > e.maxRaidPoints) continue;
-                if (e.allowedRaidStrategies != null && e.allowedRaidStrategies.Count > 0)
-                {
-                    string stratName = parms.raidStrategy?.defName;
-                    if (stratName != null && e.allowedRaidStrategies.Contains(stratName)) continue;
-                    if (isDropArrival && e.allowedRaidStrategies.Contains("DropPod")) continue;
-                }
 
                 if (isDropArrival && !e.allowDropPod)
                     continue;
@@ -104,6 +96,60 @@ namespace VehicleRaidFramework
 
                 if (vdef.type == VehicleType.Sea && !mapHasWater)
                     continue;
+
+                bool isGrav = VRF_SettingsUI.IsGravship(vdef, kind) || e.airVehicleType == "Gravship";
+                if (isGrav)
+                {
+                    var enabledPresets = factionConfig.gravshipEntries?.Where(g => g.enabled).ToList();
+                    if (enabledPresets != null && enabledPresets.Count > 0)
+                    {
+                        foreach (var gEntry in enabledPresets)
+                        {
+                            if (gEntry.minRaidPoints > 0f && parms.points < gEntry.minRaidPoints) continue;
+                            if (gEntry.maxRaidPoints > 0f && parms.points > gEntry.maxRaidPoints) continue;
+                            if (gEntry.allowedRaidStrategies != null && gEntry.allowedRaidStrategies.Count > 0)
+                            {
+                                string stratName = parms.raidStrategy?.defName;
+                                if (stratName != null && gEntry.allowedRaidStrategies.Contains(stratName)) continue;
+                                if (isDropArrival && gEntry.allowedRaidStrategies.Contains("DropPod")) continue;
+                            }
+
+                            float presetCp = gEntry.combatPower > 0f ? gEntry.combatPower : (e.combatPowerOverride > 0f ? e.combatPowerOverride : kind.combatPower);
+
+                            var presetEntry = new VRF_NaturalRaidVehicleEntry(e.vehicleKindDefName)
+                            {
+                                enabled              = true,
+                                combatPowerOverride  = presetCp,
+                                minRaidPoints        = gEntry.minRaidPoints,
+                                maxRaidPoints        = gEntry.maxRaidPoints,
+                                fuelPercent          = e.fuelPercent,
+                                helicopterMode       = e.helicopterMode,
+                                helicopterMoveSpeed  = e.helicopterMoveSpeed,
+                                airVehicleType       = e.airVehicleType,
+                                paintConfig          = e.paintConfig,
+                                isSiegeDrop          = e.isSiegeDrop,
+                                allowDropPod         = e.allowDropPod,
+                                gravshipPresetName   = gEntry.presetName,
+                                upgradeLoadouts      = e.upgradeLoadouts,
+                                allowedRaidStrategies = (gEntry.allowedRaidStrategies != null && gEntry.allowedRaidStrategies.Count > 0)
+                                    ? gEntry.allowedRaidStrategies
+                                    : e.allowedRaidStrategies
+                            };
+                            eligible.Add((kind, presetEntry));
+                        }
+                    }
+                    continue;
+                }
+
+                // Standard vehicle logic
+                if (e.minRaidPoints > 0f && parms.points < e.minRaidPoints) continue;
+                if (e.maxRaidPoints > 0f && parms.points > e.maxRaidPoints) continue;
+                if (e.allowedRaidStrategies != null && e.allowedRaidStrategies.Count > 0)
+                {
+                    string stratName = parms.raidStrategy?.defName;
+                    if (stratName != null && e.allowedRaidStrategies.Contains(stratName)) continue;
+                    if (isDropArrival && e.allowedRaidStrategies.Contains("DropPod")) continue;
+                }
 
                 eligible.Add((kind, e));
             }
@@ -261,7 +307,7 @@ namespace VehicleRaidFramework
                     if (spawnEntry.helicopterMode && spawnVDef.type == VehicleType.Air && !spawnEntry.isSiegeDrop)
                     {
                         bool isAirplane = spawnEntry.airVehicleType == "Airplane";
-                                    bool isGravship = spawnEntry.airVehicleType == "Gravship";
+                                    bool isGravship = spawnEntry.airVehicleType == "Gravship" || VRF_SettingsUI.IsGravship(spawnVDef, spawnKind);
 
                         bool alreadyHasHover = spawnVDef.comps.Any(c => c is CompProperties_VehicleHover);
                         if (alreadyHasHover)
@@ -371,7 +417,7 @@ namespace VehicleRaidFramework
 
                     VehiclePawn vehicle = null;
                     string targetPresetName = spawnEntry.gravshipPresetName;
-                    bool spawnIsGravship = spawnEntry.airVehicleType == "Gravship";
+                    bool spawnIsGravship = spawnEntry.airVehicleType == "Gravship" || VRF_SettingsUI.IsGravship(spawnVDef, spawnKind);
                     if (string.IsNullOrEmpty(targetPresetName) && spawnIsGravship)
                     {
                         var gravCfg = VRF_Mod.Settings?.GetFactionConfig(parms.faction.def.defName);

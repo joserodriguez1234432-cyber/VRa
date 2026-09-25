@@ -281,38 +281,75 @@ namespace VehicleRaidFramework.VehicleMapFramework
                 }
 
                 // --- 3. Resolve base VehicleDef ---
-                Vehicles.VehicleDef resolvedBaseDef = baseDef;
-                if (resolvedBaseDef == null || !typeof(global::VehicleMapFramework.VehiclePawnWithMap).IsAssignableFrom(((ThingDef)resolvedBaseDef).thingClass))
-                {
-                    resolvedBaseDef = DefDatabase<Vehicles.VehicleDef>.GetNamedSilentFail("VMF_GravshipVehicleBase");
-                }
-                if (resolvedBaseDef == null)
-                {
-                    Log.Error("[VehicleRaidFramework] Cannot find VMF_GravshipVehicleBase VehicleDef. Vehicle Map Framework may not be loaded correctly.");
-                    return null;
-                }
-
-                // --- 4. Create VehicleMapProps_Gravship and generate a dynamic VehicleDef ---
-                var props = new global::VehicleMapFramework.VehicleMapProps_Gravship();
-                props.baseDef = resolvedBaseDef;
-                props.size = new IntVec2(sizeX, sizeZ);
-                props.offset = new UnityEngine.Vector3(0f, 0f, 0.25f);
-                props.outOfBoundsCells = outOfBounds;
-
-                Vehicles.VehicleDef vehicleDef = global::VehicleMapFramework.GravshipVehicleUtility.GenerateGravshipVehicleDef(props);
-                if (vehicleDef == null)
-                {
-                    Log.Error("[VehicleRaidFramework] GenerateGravshipVehicleDef returned null.");
-                    return null;
-                }
-
-                // --- 5. Generate VehiclePawnWithMap (unspawned) ---
                 Faction targetFaction = faction ?? Faction.OfPlayer;
-                var vehiclePawn = (global::VehicleMapFramework.VehiclePawnWithMap)Vehicles.VehicleSpawner.GenerateVehicle(vehicleDef, targetFaction);
-                if (vehiclePawn == null)
+                Vehicles.VehicleDef resolvedBaseDef = baseDef;
+                global::VehicleMapFramework.VehiclePawnWithMap vehiclePawn = null;
+
+                // Check whether this vehicle needs dynamic gravship def generation (VMF_GravshipVehicleBase)
+                // or if it is already a concrete VehicleDef with interior map (like TMC_Dreadnought).
+                bool hasPlaceholders = resolvedBaseDef != null &&
+                    global::VehicleMapFramework.UniqueVehicleManager.PlaceholderDefs != null &&
+                    global::VehicleMapFramework.UniqueVehicleManager.PlaceholderDefs.ContainsKey(resolvedBaseDef);
+
+                bool isConcreteVehicle = resolvedBaseDef != null &&
+                    resolvedBaseDef.defName != "VMF_GravshipVehicleBase" &&
+                    typeof(global::VehicleMapFramework.VehiclePawnWithMap).IsAssignableFrom(((ThingDef)resolvedBaseDef).thingClass) &&
+                    !hasPlaceholders;
+
+                if (isConcreteVehicle)
                 {
-                    Log.Error("[VehicleRaidFramework] VehicleSpawner.GenerateVehicle returned null.");
-                    return null;
+                    // --- 4a. Concrete vehicle with interior map: spawn directly with its own intact graphic and def ---
+                    VRF_Log.Msg($"CreateGravshipVehicleFromPreset: Spawning concrete vehicle def {resolvedBaseDef.defName} directly.");
+                    vehiclePawn = Vehicles.VehicleSpawner.GenerateVehicle(resolvedBaseDef, targetFaction) as global::VehicleMapFramework.VehiclePawnWithMap;
+                    if (vehiclePawn == null)
+                    {
+                        Log.Error($"[VehicleRaidFramework] VehicleSpawner.GenerateVehicle returned null for {resolvedBaseDef.defName}.");
+                        return null;
+                    }
+                }
+                else
+                {
+                    // --- 4b. Procedural Gravship: uses VMF_GravshipVehicleBase with dynamic placeholder defs ---
+                    if (resolvedBaseDef == null || resolvedBaseDef.defName != "VMF_GravshipVehicleBase")
+                    {
+                        resolvedBaseDef = DefDatabase<Vehicles.VehicleDef>.GetNamedSilentFail("VMF_GravshipVehicleBase");
+                    }
+                    if (resolvedBaseDef == null)
+                    {
+                        Log.Error("[VehicleRaidFramework] Cannot find VMF_GravshipVehicleBase VehicleDef. Vehicle Map Framework may not be loaded correctly.");
+                        return null;
+                    }
+
+                    var props = new global::VehicleMapFramework.VehicleMapProps_Gravship();
+                    props.baseDef = resolvedBaseDef;
+                    props.size = new IntVec2(sizeX, sizeZ);
+                    props.offset = new UnityEngine.Vector3(0f, 0f, 0.25f);
+                    props.outOfBoundsCells = outOfBounds;
+
+                    Vehicles.VehicleDef vehicleDef = global::VehicleMapFramework.GravshipVehicleUtility.GenerateGravshipVehicleDef(props);
+                    if (vehicleDef == null)
+                    {
+                        Log.Error("[VehicleRaidFramework] GenerateGravshipVehicleDef returned null.");
+                        return null;
+                    }
+
+                    // Force immediate initialization of graphicData so VehiclePawn.GenerateGraphic never hits a null Graphic
+                    try
+                    {
+                        vehicleDef.graphicData?.Init(vehicleDef);
+                    }
+                    catch (Exception gEx)
+                    {
+                        VRF_Log.Msg($"Notice: graphicData.Init: {gEx.Message}");
+                    }
+
+                    // --- 5. Generate VehiclePawnWithMap (unspawned) ---
+                    vehiclePawn = (global::VehicleMapFramework.VehiclePawnWithMap)Vehicles.VehicleSpawner.GenerateVehicle(vehicleDef, targetFaction);
+                    if (vehiclePawn == null)
+                    {
+                        Log.Error("[VehicleRaidFramework] VehicleSpawner.GenerateVehicle returned null.");
+                        return null;
+                    }
                 }
 
                 // --- 6. Access interior map (triggers GenerateVehicleMap) ---
