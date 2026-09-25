@@ -1,6 +1,5 @@
 using HarmonyLib;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using UnityEngine;
 using Verse;
@@ -14,6 +13,10 @@ namespace VehicleRaidFramework
     [HarmonyPatch(typeof(VehiclePathFollower), nameof(VehiclePathFollower.PatherTick))]
     public static class Patch_VehicleNPCPathUpdate
     {
+        private static readonly List<CellRect> tmpAllyRects = new List<CellRect>();
+        private static readonly List<KeyValuePair<IntVec3, int>> tmpAllyDestinations = new List<KeyValuePair<IntVec3, int>>();
+        private static readonly List<KeyValuePair<IntVec3, float>> tmpCandidates = new List<KeyValuePair<IntVec3, float>>();
+
         [HarmonyPostfix]
         public static void Postfix(VehiclePathFollower __instance, VehiclePawn ___vehicle)
         {
@@ -37,11 +40,13 @@ namespace VehicleRaidFramework
             float minRange = ___vehicle.CompVehicleTurrets?.MinRange ?? 0f;
 
             bool isMortar = false;
-            if (___vehicle.CompVehicleTurrets != null && ___vehicle.CompVehicleTurrets.Turrets != null)
+            var compTurrets = ___vehicle.CompVehicleTurrets;
+            if (compTurrets != null && compTurrets.Turrets != null)
             {
-                foreach (var turret in ___vehicle.CompVehicleTurrets.Turrets)
+                var turrets = compTurrets.Turrets;
+                for (int i = 0; i < turrets.Count; i++)
                 {
-                    if (turret.ProjectileDef?.projectile?.flyOverhead == true)
+                    if (turrets[i].ProjectileDef?.projectile?.flyOverhead == true)
                     {
                         isMortar = true;
                         break;
@@ -49,13 +54,25 @@ namespace VehicleRaidFramework
                 }
             }
 
-            bool isTransporting = ___vehicle.AllPawnsAboard.Any(p =>
+            bool isTransporting = false;
+            if (___vehicle.handlers != null)
             {
-                if (p.Dead || p.Downed) return false;
-                var h = ___vehicle.handlers.FirstOrDefault(hh => hh.thingOwner.Contains(p));
-                return h?.role != null && (h.role.HandlingTypes & HandlingType.Movement) == 0 &&
-                       (h.role.HandlingTypes & HandlingType.Turret) == 0;
-            });
+                for (int i = 0; i < ___vehicle.handlers.Count; i++)
+                {
+                    var h = ___vehicle.handlers[i];
+                    if (h?.role == null) continue;
+                    if ((h.role.HandlingTypes & HandlingType.Movement) != 0 || (h.role.HandlingTypes & HandlingType.Turret) != 0) continue;
+                    for (int j = 0; j < h.thingOwner.Count; j++)
+                    {
+                        if (h.thingOwner[j] is Pawn p && !p.Dead && !p.Downed)
+                        {
+                            isTransporting = true;
+                            break;
+                        }
+                    }
+                    if (isTransporting) break;
+                }
+            }
 
             if (isTransporting)
             {
@@ -63,8 +80,11 @@ namespace VehicleRaidFramework
                 minRange = 10f;
             }
 
-            float currentDistToEnemy = ___vehicle.Position.DistanceTo(enemy.Position);
-            bool currentPosValid = currentDistToEnemy >= minRange && currentDistToEnemy <= maxRange
+            float currentDistSq = ___vehicle.Position.DistanceToSquared(enemy.Position);
+            float minRangeSq = minRange * minRange;
+            float maxRangeSq = maxRange * maxRange;
+
+            bool currentPosValid = currentDistSq >= minRangeSq && currentDistSq <= maxRangeSq
                                    && (isMortar || GenSight.LineOfSight(___vehicle.Position, enemy.Position, ___vehicle.Map));
 
             if (currentPosValid)
@@ -73,13 +93,14 @@ namespace VehicleRaidFramework
                 return;
             }
 
-            float destToEnemy = currentDest.Cell.DistanceTo(enemy.Position);
-            bool destStillValid = destToEnemy >= minRange && destToEnemy <= maxRange
+            float destToEnemySq = currentDest.Cell.DistanceToSquared(enemy.Position);
+            bool destStillValid = destToEnemySq >= minRangeSq && destToEnemySq <= maxRangeSq
                                   && (isMortar || GenSight.LineOfSight(currentDest.Cell, enemy.Position, ___vehicle.Map));
 
             if (destStillValid) return;
 
-            if (currentDistToEnemy > maxRange + 15f && currentDistToEnemy > 80f)
+            float currentDist = Mathf.Sqrt(currentDistSq);
+            if (currentDist > maxRange + 15f && currentDist > 80f)
             {
                 return;
             }
@@ -102,9 +123,10 @@ namespace VehicleRaidFramework
             var targets = vehicle.Map.attackTargetsCache.GetPotentialTargetsFor(vehicle);
             if (targets == null || targets.Count == 0) return null;
             Thing best = null;
-            float bestDist = float.MaxValue;
-            foreach (var t in targets)
+            float bestDistSq = float.MaxValue;
+            for (int i = 0; i < targets.Count; i++)
             {
+                var t = targets[i];
                 if (t.ThreatDisabled(vehicle)) continue;
                 if (!AttackTargetFinder.IsAutoTargetable(t)) continue;
                 Thing thing = t.Thing;
@@ -112,7 +134,7 @@ namespace VehicleRaidFramework
                 if (thing.Map.fogGrid.IsFogged(thing.Position)) continue;
                 if (thing is Pawn p && (p.Dead || p.Downed)) continue;
                 float d = thing.Position.DistanceToSquared(vehicle.Position);
-                if (d < bestDist) { bestDist = d; best = thing; }
+                if (d < bestDistSq) { bestDistSq = d; best = thing; }
             }
             return best;
         }
@@ -126,51 +148,76 @@ namespace VehicleRaidFramework
             if (searchMin < 0) searchMin = 0;
             float searchIdeal = Mathf.Clamp(idealRange, searchMin + 3f, searchRadius - 2f);
 
-            var allyRects = new List<CellRect>();
-            var allyDestinations = new List<KeyValuePair<IntVec3, int>>();
+            tmpAllyRects.Clear();
+            tmpAllyDestinations.Clear();
 
-            foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
+            Lord lord = vehicle.GetLord();
+            if (lord != null)
             {
-                if (p is VehiclePawn v && v != vehicle && v.Faction == vehicle.Faction)
+                for (int i = 0; i < lord.ownedPawns.Count; i++)
                 {
-                    int vSize = Mathf.Max(v.def.size.x, v.def.size.z);
-                    allyRects.Add(v.OccupiedRect().ExpandedBy(3));
-
-                    if (v.CurJob != null && v.CurJob.def == JobDefOf.Goto && v.CurJob.targetA.IsValid)
+                    Pawn p = lord.ownedPawns[i];
+                    if (p is VehiclePawn v && v != vehicle && v.Faction == vehicle.Faction && v.Spawned && v.Map == map)
                     {
-                        allyDestinations.Add(new KeyValuePair<IntVec3, int>(v.CurJob.targetA.Cell, vSize));
+                        int vSize = Mathf.Max(v.def.size.x, v.def.size.z);
+                        tmpAllyRects.Add(v.OccupiedRect().ExpandedBy(3));
+
+                        if (v.CurJob != null && v.CurJob.def == JobDefOf.Goto && v.CurJob.targetA.IsValid)
+                        {
+                            tmpAllyDestinations.Add(new KeyValuePair<IntVec3, int>(v.CurJob.targetA.Cell, vSize));
+                        }
+                    }
+                }
+            }
+            else
+            {
+                var factionPawns = map.mapPawns.SpawnedPawnsInFaction(vehicle.Faction);
+                for (int i = 0; i < factionPawns.Count; i++)
+                {
+                    Pawn p = factionPawns[i];
+                    if (p is VehiclePawn v && v != vehicle)
+                    {
+                        int vSize = Mathf.Max(v.def.size.x, v.def.size.z);
+                        tmpAllyRects.Add(v.OccupiedRect().ExpandedBy(3));
+
+                        if (v.CurJob != null && v.CurJob.def == JobDefOf.Goto && v.CurJob.targetA.IsValid)
+                        {
+                            tmpAllyDestinations.Add(new KeyValuePair<IntVec3, int>(v.CurJob.targetA.Cell, vSize));
+                        }
                     }
                 }
             }
 
-            var candidates = new List<KeyValuePair<IntVec3, float>>();
+            tmpCandidates.Clear();
             int validCellsFound = 0;
-            float skipRate = (searchRadius > 40f) ? 0.7f : 0.0f; 
+            float skipRate = (searchRadius > 40f) ? 0.75f : 0.0f; 
+
+            float searchMinSq = searchMin * searchMin;
+            float searchRadiusSq = searchRadius * searchRadius;
 
             foreach (IntVec3 cell in GenRadial.RadialCellsAround(target.Position, searchRadius, true))
             {
                 if (!cell.InBounds(map)) continue;
-                
-                float distToTarget = cell.DistanceTo(target.Position);
-                if (distToTarget < searchMin || distToTarget > searchRadius) continue;
 
-                if (Rand.Value < skipRate) continue;
+                float distToTargetSq = cell.DistanceToSquared(target.Position);
+                if (distToTargetSq < searchMinSq || distToTargetSq > searchRadiusSq) continue;
+
+                if (skipRate > 0f && Rand.Value < skipRate) continue;
 
                 if (!cell.Standable(map)) continue;
-                if (!isMortar && !GenSight.LineOfSight(cell, target.Position, map)) continue;
 
                 bool insideAlly = false;
-                for (int i = 0; i < allyRects.Count; i++)
+                for (int i = 0; i < tmpAllyRects.Count; i++)
                 {
-                    if (allyRects[i].Contains(cell)) { insideAlly = true; break; }
+                    if (tmpAllyRects[i].Contains(cell)) { insideAlly = true; break; }
                 }
                 if (insideAlly) continue;
 
                 bool destinationTaken = false;
-                for (int i = 0; i < allyDestinations.Count; i++)
+                for (int i = 0; i < tmpAllyDestinations.Count; i++)
                 {
-                    float standoffDistance = allyDestinations[i].Value + 2f;
-                    if (cell.DistanceToSquared(allyDestinations[i].Key) < (standoffDistance * standoffDistance))
+                    float standoffDistance = tmpAllyDestinations[i].Value + 2f;
+                    if (cell.DistanceToSquared(tmpAllyDestinations[i].Key) < (standoffDistance * standoffDistance))
                     {
                         destinationTaken = true;
                         break;
@@ -178,25 +225,30 @@ namespace VehicleRaidFramework
                 }
                 if (destinationTaken) continue;
 
+                // Perform line of sight check ONLY after all positional/geometry filters pass
+                if (!isMortar && !GenSight.LineOfSight(cell, target.Position, map)) continue;
+
+                float distToTarget = Mathf.Sqrt(distToTargetSq);
                 float rangeScore = Mathf.Abs(distToTarget - searchIdeal) * 2f;
                 float travelScore = cell.DistanceTo(vehicle.Position) * 0.3f;
                 float score = rangeScore + travelScore + Rand.Range(0f, 8f);
 
-                candidates.Add(new KeyValuePair<IntVec3, float>(cell, score));
+                tmpCandidates.Add(new KeyValuePair<IntVec3, float>(cell, score));
                 validCellsFound++;
-                
-                if (validCellsFound > 100) break;
+
+                if (validCellsFound >= 35) break;
             }
 
-            candidates.Sort((a, b) => a.Value.CompareTo(b.Value));
+            tmpCandidates.Sort((a, b) => a.Value.CompareTo(b.Value));
 
             int pathChecks = 0;
-            foreach (var kvp in candidates)
+            for (int i = 0; i < tmpCandidates.Count; i++)
             {
                 if (pathChecks++ >= 5) break;
-                if (vehicle.CanReachVehicle(new LocalTargetInfo(kvp.Key), PathEndMode.OnCell, Danger.Deadly, TraverseMode.NoPassClosedDoors))
+                IntVec3 candCell = tmpCandidates[i].Key;
+                if (vehicle.CanReachVehicle(new LocalTargetInfo(candCell), PathEndMode.OnCell, Danger.Deadly, TraverseMode.NoPassClosedDoors))
                 {
-                    return kvp.Key;
+                    return candCell;
                 }
             }
 

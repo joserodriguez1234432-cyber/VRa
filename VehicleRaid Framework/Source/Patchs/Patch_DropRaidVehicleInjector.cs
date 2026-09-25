@@ -186,9 +186,15 @@ namespace VehicleRaidFramework
             {
                 float cargo = vdef.GetStatValueAbstract(VehicleStatDefOf.CargoCapacity);
 
-                var baseTurretKeys = new HashSet<string>(
-                    vdef.CompPropsVehicleTurrets?.turrets?.Select(t => t.def?.defName).Where(k => k != null)
-                    ?? System.Linq.Enumerable.Empty<string>());
+                var baseTurretKeys = new HashSet<string>();
+                if (vdef.CompPropsVehicleTurrets?.turrets != null)
+                {
+                    for (int tIdx = 0; tIdx < vdef.CompPropsVehicleTurrets.turrets.Count; tIdx++)
+                    {
+                        string tName = vdef.CompPropsVehicleTurrets.turrets[tIdx].def?.defName;
+                        if (tName != null) baseTurretKeys.Add(tName);
+                    }
+                }
 
                 VRF_UpgradeLoadout chosenLoadout = entry.upgradeLoadouts.NullOrEmpty()
                     ? null
@@ -437,8 +443,11 @@ namespace VehicleRaidFramework
         {
             var centers = new List<IntVec3>();
 
-            foreach (Skyfaller skyfaller in map.listerThings.ThingsInGroup(ThingRequestGroup.ThingHolder).OfType<Skyfaller>())
+            List<Thing> holders = map.listerThings.ThingsInGroup(ThingRequestGroup.ThingHolder);
+            for (int hIdx = 0; hIdx < holders.Count; hIdx++)
             {
+                if (!(holders[hIdx] is Skyfaller skyfaller)) continue;
+
                 ThingOwner skyInner = skyfaller.GetDirectlyHeldThings();
                 if (skyInner == null || skyInner.Count == 0) continue;
 
@@ -603,14 +612,38 @@ namespace VehicleRaidFramework
         {
             var anchors = new List<IntVec3>();
 
-            foreach (Pawn p in map.mapPawns.AllPawnsSpawned)
+            var pawns = map.mapPawns.AllPawnsSpawned;
+            for (int i = 0; i < pawns.Count; i++)
             {
+                Pawn p = pawns[i];
                 if (p.Faction != null && p.Faction.HostileTo(Faction.OfPlayer))
                     anchors.Add(p.Position);
             }
 
-            foreach (Building b in map.listerBuildings.allBuildingsColonist)
-                anchors.Add(b.Position);
+            // Prefer combat targets / major structures over every single conduit and floor tile
+            var combatTargets = map.listerBuildings.allBuildingsColonistCombatTargets;
+            if (combatTargets != null && combatTargets.Count > 0)
+            {
+                int count = 0;
+                foreach (Building b in combatTargets)
+                {
+                    anchors.Add(b.Position);
+                    if (++count >= 40) break;
+                }
+            }
+            else
+            {
+                var buildings = map.listerBuildings.allBuildingsColonist;
+                if (buildings != null)
+                {
+                    int count = 0;
+                    foreach (Building b in buildings)
+                    {
+                        anchors.Add(b.Position);
+                        if (++count >= 40) break;
+                    }
+                }
+            }
 
             if (anchors.Count == 0)
                 anchors.Add(map.Center);
@@ -621,6 +654,17 @@ namespace VehicleRaidFramework
         private static bool IsValidCell(IntVec3 center, Map map, int radius)
         {
             if (!center.IsValid || !center.InBounds(map)) return false;
+            if (center.Roofed(map) || !center.Walkable(map) || center.GetTerrain(map).IsWater) return false;
+
+            // Fast check on 4 outer corners before scanning interior cells
+            IntVec3 c1 = new IntVec3(center.x - radius, 0, center.z - radius);
+            if (!c1.InBounds(map) || c1.Roofed(map) || !c1.Walkable(map) || c1.GetTerrain(map).IsWater) return false;
+            IntVec3 c2 = new IntVec3(center.x + radius, 0, center.z - radius);
+            if (!c2.InBounds(map) || c2.Roofed(map) || !c2.Walkable(map) || c2.GetTerrain(map).IsWater) return false;
+            IntVec3 c3 = new IntVec3(center.x - radius, 0, center.z + radius);
+            if (!c3.InBounds(map) || c3.Roofed(map) || !c3.Walkable(map) || c3.GetTerrain(map).IsWater) return false;
+            IntVec3 c4 = new IntVec3(center.x + radius, 0, center.z + radius);
+            if (!c4.InBounds(map) || c4.Roofed(map) || !c4.Walkable(map) || c4.GetTerrain(map).IsWater) return false;
 
             for (int dx = -radius; dx <= radius; dx++)
             {
@@ -843,7 +887,7 @@ namespace VehicleRaidFramework
                     {
                         behavior     = VRF_NaturalRaidBehavior.HoldThenAssault;
                         cfgHoldTicks = 120000;
-                        Log.Message($"[VRF_Debug] TryFinalizeLanding — forcing HoldThenAssault for {vehicle.LabelShort} (parentToil={toilName})");
+                        VRF_Log.Msg($"[VRF_Debug] TryFinalizeLanding — forcing HoldThenAssault for {vehicle.LabelShort} (parentToil={toilName})");
                     }
                 }
             }
@@ -866,7 +910,7 @@ namespace VehicleRaidFramework
                     if (existingVJob?.naturalRaidLord != null &&
                         existingVJob.naturalRaidLord != detectedNaturalLord)
                     {
-                        Log.Message($"[VRF_Debug] TryFinalizeLanding — lord has different naturalRaidLord, creating NEW lord for group at {detectedNaturalLord.CurLordToil?.FlagLoc}");
+                        VRF_Log.Msg($"[VRF_Debug] TryFinalizeLanding — lord has different naturalRaidLord, creating NEW lord for group at {detectedNaturalLord.CurLordToil?.FlagLoc}");
                         lord = null;
                     }
                 }
@@ -896,7 +940,7 @@ namespace VehicleRaidFramework
                     job.naturalRaidLord = detectedNaturalLord;
 
                     lord = LordMaker.MakeNewLord(vehicle.Faction, job, map, new List<Pawn> { vehicle });
-                    Log.Message($"[VRF_Debug] TryFinalizeLanding — created NEW lord behavior={behavior} for {vehicle.LabelShort}");
+                    VRF_Log.Msg($"[VRF_Debug] TryFinalizeLanding — created NEW lord behavior={behavior} for {vehicle.LabelShort}");
                 }
             }
 
@@ -956,10 +1000,10 @@ namespace VehicleRaidFramework
                     : vehicle.Position.DistanceTo(
                         l.ownedPawns.FirstOrDefault()?.Position ?? map.Center);
 
-                Log.Message($"[VRF_Debug] FindClosestNaturalLord — lord#{naturalLordCount} job={l.LordJob?.GetType().Name} toil={l.CurLordToil?.GetType().Name} flag={flag} dist={dist:F1}");
+                VRF_Log.Msg($"[VRF_Debug] FindClosestNaturalLord — lord#{naturalLordCount} job={l.LordJob?.GetType().Name} toil={l.CurLordToil?.GetType().Name} flag={flag} dist={dist:F1}");
                 if (dist < bestDist) { bestDist = dist; closest = l; }
             }
-            Log.Message($"[VRF_Debug] FindClosestNaturalLord — {naturalLordCount} natural lords found, closest FlagLoc={closest?.CurLordToil?.FlagLoc}");
+            VRF_Log.Msg($"[VRF_Debug] FindClosestNaturalLord — {naturalLordCount} natural lords found, closest FlagLoc={closest?.CurLordToil?.FlagLoc}");
             return closest;
         }
 

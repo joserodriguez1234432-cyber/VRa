@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using HarmonyLib;
 using RimWorld;
 using Verse;
@@ -12,6 +13,16 @@ namespace VehicleRaidFramework
     {
         private const float EnemyDetectionRadius = 40f;
         private const float TriggerThreshold = 0.70f;
+
+        private static JobDef cachedRepairJobDef;
+        private static JobDef cachedBoardJobDef;
+        private static DutyDef cachedAssaultDuty;
+        private static DutyDef cachedAssaultTransportDuty;
+
+        private static JobDef RepairJobDef => cachedRepairJobDef ?? (cachedRepairJobDef = DefDatabase<JobDef>.GetNamedSilentFail(VRF_RepairVehicle));
+        private static JobDef BoardJobDef => cachedBoardJobDef ?? (cachedBoardJobDef = DefDatabase<JobDef>.GetNamedSilentFail(Board));
+        private static DutyDef AssaultDuty => cachedAssaultDuty ?? (cachedAssaultDuty = VRF_DutyDefOf.VRF_InfantryAssault ?? DefDatabase<DutyDef>.GetNamedSilentFail(VRF_InfantryAssault));
+        private static DutyDef AssaultTransportDuty => cachedAssaultTransportDuty ?? (cachedAssaultTransportDuty = VRF_DutyDefOf.VRF_InfantryAssault_Transport ?? DefDatabase<DutyDef>.GetNamedSilentFail(VRF_InfantryAssault_Transport));
 
         [HarmonyPriority(Priority.Low)]
         public static void Postfix(Pawn_JobTracker __instance, ref ThinkResult __result)
@@ -28,16 +39,13 @@ namespace VehicleRaidFramework
             if (!(lord?.LordJob is LordJob_VehicleRaid)) return;
 
             if (__result.Job == null) return;
-            string curJobName = __result.Job.def?.defName ?? "";
-            if (curJobName == "VRF_RepairVehicle") return;
-            if (curJobName == "Board") return;
+            JobDef curJobDef = __result.Job.def;
+            if (curJobDef == RepairJobDef || curJobDef == BoardJobDef || curJobDef.defName == VRF_RepairVehicle || curJobDef.defName == Board) return;
 
             DutyDef duty = pawn.mindState?.duty?.def;
             if (duty == null) return;
-            bool isAssaultDuty = duty == VRF_DutyDefOf.VRF_InfantryAssault ||
-                                 duty.defName == "VRF_InfantryAssault" ||
-                                 duty == VRF_DutyDefOf.VRF_InfantryAssault_Transport ||
-                                 duty.defName == "VRF_InfantryAssault_Transport";
+            bool isAssaultDuty = duty == AssaultDuty || duty == AssaultTransportDuty ||
+                                 duty.defName == VRF_InfantryAssault || duty.defName == VRF_InfantryAssault_Transport;
             if (!isAssaultDuty) return;
 
             if (VRF_TransportUtil.HasEnemy(pawn, EnemyDetectionRadius)) return;
@@ -48,7 +56,7 @@ namespace VehicleRaidFramework
             IntVec3 standCell = FindStandCell(pawn, target);
             if (!standCell.IsValid) return;
 
-            JobDef repairJobDef = DefDatabase<JobDef>.GetNamed("VRF_RepairVehicle", false);
+            JobDef repairJobDef = RepairJobDef;
             if (repairJobDef == null) return;
 
             Job repairJob = JobMaker.MakeJob(repairJobDef, target, standCell);
@@ -59,24 +67,25 @@ namespace VehicleRaidFramework
         private static VehiclePawn FindRepairTarget(Pawn pawn, Lord lord)
         {
             VehiclePawn best = null;
-            float bestDist = float.MaxValue;
+            float bestDistSq = float.MaxValue;
 
-            foreach (Pawn p in lord.ownedPawns)
+            List<Pawn> lordPawns = lord.ownedPawns;
+            for (int i = 0; i < lordPawns.Count; i++)
             {
-                if (!(p is VehiclePawn v)) continue;
+                if (!(lordPawns[i] is VehiclePawn v)) continue;
                 if (v.Dead || !v.Spawned || v.Map != pawn.Map) continue;
                 if (v.Faction != pawn.Faction) continue;
+
+                float distSq = v.Position.DistanceToSquared(pawn.Position);
+                if (distSq >= bestDistSq) continue;
+
                 if (v.GetComp<VehicleRaid.CompVehicleHover>()?.IsAirborne == true) continue;
                 if (v.vehiclePather != null && v.vehiclePather.Moving) continue;
                 if (!VehicleNeedsRepair(v)) continue;
                 if (!pawn.CanReach(v, PathEndMode.Touch, Danger.Deadly)) continue;
 
-                float dist = v.Position.DistanceToSquared(pawn.Position);
-                if (dist < bestDist)
-                {
-                    bestDist = dist;
-                    best = v;
-                }
+                bestDistSq = distSq;
+                best = v;
             }
 
             return best;
@@ -84,10 +93,11 @@ namespace VehicleRaidFramework
 
         private static bool VehicleNeedsRepair(VehiclePawn vehicle)
         {
-            if (vehicle.statHandler?.components == null) return false;
-            foreach (var component in vehicle.statHandler.components)
+            var components = vehicle.statHandler?.components;
+            if (components == null) return false;
+            for (int i = 0; i < components.Count; i++)
             {
-                if (component.HealthPercent < TriggerThreshold)
+                if (components[i].HealthPercent < TriggerThreshold)
                     return true;
             }
             return false;
@@ -98,7 +108,7 @@ namespace VehicleRaidFramework
             Map map = vehicle.Map;
             CellRect occupied = vehicle.OccupiedRect();
 
-            foreach (IntVec3 cell in GenRadial.RadialCellsAround(vehicle.Position, 3, false))
+            foreach (IntVec3 cell in occupied.AdjacentCells)
             {
                 if (!cell.InBounds(map)) continue;
                 if (!cell.Standable(map)) continue;

@@ -17,13 +17,22 @@ namespace VehicleRaidFramework
             if (vehicle == null || vehicle.Faction == null || vehicle.Faction.IsPlayer)
                 return true;
 
-            if (!(vehicle.GetLord()?.LordJob is LordJob_VehicleRaid))
-                return true;
-
             Thing target = __instance.targetInfo.Thing;
+            if (target == null && __instance.targetInfo.Cell.IsValid && vehicle.Map != null)
+            {
+                target = __instance.targetInfo.Cell.GetEdifice(vehicle.Map);
+            }
+
             if (target is Building)
             {
-                return false;
+                Lord lord = vehicle.GetLord();
+                if (lord?.LordJob is LordJob_VehicleRaid)
+                    return false;
+
+                if (lord?.LordJob != null && (lord.LordJob is LordJob_AssaultColony || 
+                    lord.LordJob.GetType().Name.Contains(AssaultColony) || 
+                    lord.LordJob.GetType().Name.Contains(Raid)))
+                    return false;
             }
 
             return true;

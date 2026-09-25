@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Collections.Generic;
 using HarmonyLib;
 using RimWorld;
@@ -14,17 +13,26 @@ namespace VehicleRaidFramework
     [HarmonyPatch(typeof(VehiclePawn), "Tick")]
     public static class Patch_RaidVehicle_CrewDependency
     {
+        private static readonly List<Pawn> tmpToDisembark = new List<Pawn>();
+        private static readonly List<Pawn> tmpDriverDisembark = new List<Pawn>();
+
         static void Postfix(VehiclePawn __instance)
         {
             if (__instance == null || !__instance.Spawned || __instance.Destroyed || __instance.Map == null) return;
             if (__instance.Faction == null || __instance.Faction.IsPlayer) return;
+
+            // Only run on tick intervals 30 or 60, avoiding 58 out of 60 ticks of overhead completely
+            bool tick30 = __instance.IsHashIntervalTick(30);
+            bool tick60 = __instance.IsHashIntervalTick(60);
+            if (!tick30 && !tick60) return;
 
             Lord lord = __instance.GetLord();
             bool isVRFLord = lord?.LordJob is LordJob_VehicleRaid || lord?.LordJob is LordJob_VehicleTrade || lord?.LordJob is LordJob_HelicopterTrade;
             
             if (!isVRFLord)
             {
-                bool isNaturalRaid = lord != null && (lord.LordJob.GetType().Name.Contains("AssaultColony") || lord.LordJob.GetType().Name.Contains("Raid") || lord.LordJob is LordJob_DefendBase);
+                bool isNaturalRaid = lord != null && (lord.LordJob is LordJob_AssaultColony || lord.LordJob is LordJob_DefendBase ||
+                    lord.LordJob.GetType().Name.Contains("AssaultColony") || lord.LordJob.GetType().Name.Contains("Raid"));
                 if (!isNaturalRaid) return;
 
                 if (__instance.GetComp<VehicleRaid.CompVehicleHover>() == null)
@@ -40,12 +48,13 @@ namespace VehicleRaidFramework
                 }
             }
 
-            if (__instance.IsHashIntervalTick(30))
+            if (tick30)
             {
                 Patch_VehicleNPCOnOff.UpdateVehiclePower(__instance);
             }
 
-            if (!__instance.IsHashIntervalTick(60)) return;
+            if (!tick60) return;
+
             if (__instance.VehicleDef.type == VehicleType.Air && __instance.GetComp<VehicleRaid.CompVehicleHover>() == null)
             {
                 if (VRF_TransportUtil.IsSiegeDropVehicle(__instance))
@@ -110,50 +119,69 @@ namespace VehicleRaidFramework
         private static void CheckRaidLordStartExit(VehiclePawn vehicle, Lord vehLord)
         {
             Map map = vehicle.Map;
-            foreach (Lord otherLord in map.lordManager.lords)
+            List<Lord> lords = map.lordManager.lords;
+            for (int i = 0; i < lords.Count; i++)
             {
+                Lord otherLord = lords[i];
                 if (otherLord == vehLord) continue;
                 if (otherLord.faction != vehLord.faction) continue;
                 if (otherLord.LordJob is LordJob_VehicleRaid) continue;
 
                 bool isNaturalRaid = otherLord.LordJob != null && 
-                    (otherLord.LordJob.GetType().Name.Contains("AssaultColony") || 
-                     otherLord.LordJob.GetType().Name.Contains("Raid") || 
-                     otherLord.LordJob is LordJob_DefendBase);
+                    (otherLord.LordJob is LordJob_AssaultColony ||
+                     otherLord.LordJob is LordJob_DefendBase ||
+                     otherLord.LordJob.GetType().Name.Contains("AssaultColony") || 
+                     otherLord.LordJob.GetType().Name.Contains("Raid"));
                 if (!isNaturalRaid) continue;
 
                 bool alreadyExiting = false;
                 LordToil curToil = otherLord.CurLordToil;
                 if (curToil != null)
                 {
-                    string toilType = curToil.GetType().Name;
-                    if (toilType.Contains("Exit") || toilType.Contains("Leave") ||
-                        toilType.Contains("Flee") || toilType.Contains("Escape") ||
-                        toilType.Contains("Steal") || toilType.Contains("Kidnap"))
+                    if (curToil is LordToil_PanicFlee || curToil is LordToil_ExitMap || curToil is LordToil_TakeWoundedGuest)
                     {
                         alreadyExiting = true;
                     }
+                    else
+                    {
+                        string toilType = curToil.GetType().Name;
+                        if (toilType.Contains("Exit") || toilType.Contains("Leave") ||
+                            toilType.Contains("Flee") || toilType.Contains("Escape") ||
+                            toilType.Contains("Steal") || toilType.Contains("Kidnap"))
+                        {
+                            alreadyExiting = true;
+                        }
+                    }
                 }
 
-                if (!alreadyExiting)
+                if (!alreadyExiting && otherLord.Graph?.lordToils != null)
                 {
-                    LordToil newLordToil = otherLord.Graph?.lordToils?.FirstOrDefault(st => st is LordToil_PanicFlee);
+                    LordToil newLordToil = null;
+                    List<LordToil> toils = otherLord.Graph.lordToils;
+                    for (int j = 0; j < toils.Count; j++)
+                    {
+                        if (toils[j] is LordToil_PanicFlee)
+                        {
+                            newLordToil = toils[j];
+                            break;
+                        }
+                    }
+
                     if (newLordToil != null)
                     {
                         otherLord.GotoToil(newLordToil);
                     }
                     else
                     {
-                        LordToil exitToil = otherLord.Graph?.lordToils?.FirstOrDefault(st => 
-                            st.GetType().Name.Contains("Exit") || 
-                            st.GetType().Name.Contains("Leave") || 
-                            st.GetType().Name.Contains("Flee") || 
-                            st.GetType().Name.Contains("Escape") || 
-                            st.GetType().Name.Contains("Steal") || 
-                            st.GetType().Name.Contains("Kidnap"));
-                        if (exitToil != null)
+                        for (int j = 0; j < toils.Count; j++)
                         {
-                            otherLord.GotoToil(exitToil);
+                            LordToil st = toils[j];
+                            if (st is LordToil_ExitMap || st.GetType().Name.Contains("Exit") || 
+                                st.GetType().Name.Contains("Leave") || st.GetType().Name.Contains("Flee"))
+                            {
+                                otherLord.GotoToil(st);
+                                break;
+                            }
                         }
                     }
                 }
@@ -163,15 +191,19 @@ namespace VehicleRaidFramework
         private static void CheckRaidLordExitSync(VehiclePawn vehicle, Lord vehLord)
         {
             Map map = vehicle.Map;
-            foreach (Lord otherLord in map.lordManager.lords)
+            List<Lord> lords = map.lordManager.lords;
+            for (int i = 0; i < lords.Count; i++)
             {
+                Lord otherLord = lords[i];
                 if (otherLord == vehLord) continue;
                 if (otherLord.faction != vehLord.faction) continue;
                 if (otherLord.LordJob is LordJob_VehicleRaid) continue;
 
                 int livingActiveCount = 0;
-                foreach (Pawn p in otherLord.ownedPawns)
+                List<Pawn> otherPawns = otherLord.ownedPawns;
+                for (int j = 0; j < otherPawns.Count; j++)
                 {
+                    Pawn p = otherPawns[j];
                     if (p.Dead || p.Downed || !p.Spawned || p.Map != map) continue;
                     if (p.ParentHolder is VehicleRoleHandler) continue;
                     livingActiveCount++;
@@ -180,23 +212,30 @@ namespace VehicleRaidFramework
                 if (livingActiveCount == 0) continue;
 
                 bool shouldExit = false;
-
                 LordToil curToil = otherLord.CurLordToil;
                 if (curToil != null)
                 {
-                    string toilType = curToil.GetType().Name;
-                    if (toilType.Contains("Exit") || toilType.Contains("Leave") ||
-                        toilType.Contains("Flee") || toilType.Contains("Escape") ||
-                        toilType.Contains("Steal") || toilType.Contains("Kidnap"))
+                    if (curToil is LordToil_PanicFlee || curToil is LordToil_ExitMap || curToil is LordToil_TakeWoundedGuest)
                     {
                         shouldExit = true;
+                    }
+                    else
+                    {
+                        string toilType = curToil.GetType().Name;
+                        if (toilType.Contains("Exit") || toilType.Contains("Leave") ||
+                            toilType.Contains("Flee") || toilType.Contains("Escape") ||
+                            toilType.Contains("Steal") || toilType.Contains("Kidnap"))
+                        {
+                            shouldExit = true;
+                        }
                     }
                 }
 
                 if (!shouldExit)
                 {
-                    foreach (Pawn p in otherLord.ownedPawns)
+                    for (int j = 0; j < otherPawns.Count; j++)
                     {
+                        Pawn p = otherPawns[j];
                         if (p.Dead || p.Downed || !p.Spawned || p.Map != map) continue;
                         if (p.ParentHolder is VehicleRoleHandler) continue;
                         DutyDef duty = p.mindState?.duty?.def;
@@ -230,8 +269,9 @@ namespace VehicleRaidFramework
 
             int totalPassengerSlots = 0;
             int boardedPassengers = 0;
-            foreach (var handler in vehicle.handlers)
+            for (int i = 0; i < vehicle.handlers.Count; i++)
             {
+                var handler = vehicle.handlers[i];
                 if (handler?.role == null) continue;
                 bool isPassengerSlot = (handler.role.HandlingTypes & HandlingType.Movement) == 0 &&
                                        (handler.role.HandlingTypes & HandlingType.Turret) == 0;
@@ -246,13 +286,14 @@ namespace VehicleRaidFramework
             Lord lord = vehicle.GetLord();
             if (lord != null && !allBoarded)
             {
-                foreach (Pawn p in lord.ownedPawns)
+                for (int i = 0; i < lord.ownedPawns.Count; i++)
                 {
+                    Pawn p = lord.ownedPawns[i];
                     if (p is VehiclePawn) continue;
                     if (p.Dead || p.Downed) continue;
                     if (!p.Spawned || p.Map != vehicle.Map) continue;
                     if (p.ParentHolder is VehicleRoleHandler) continue;
-                    if (p.Position.DistanceTo(vehicle.Position) > 60f) continue;
+                    if (p.Position.DistanceToSquared(vehicle.Position) > 3600) continue; // 60 * 60
                     anyInfantryOnMap = true;
                     break;
                 }
@@ -261,15 +302,15 @@ namespace VehicleRaidFramework
             DutyDef targetDuty;
             if (allBoarded || !anyInfantryOnMap)
             {
-                targetDuty = VRF_DutyDefOf.VRF_VehicleExitMap ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleExitMap", false) ?? DutyDefOf.ExitMapBest;
+                targetDuty = VRF_DutyDefOf.VRF_VehicleExitMap ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleExitMap") ?? DutyDefOf.ExitMapBest;
             }
             else if (VRF_TransportUtil.IsArmedTransportVehicle(vehicle))
             {
-                targetDuty = VRF_DutyDefOf.VRF_VehicleArmedTransport ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleArmedTransport", false);
+                targetDuty = VRF_DutyDefOf.VRF_VehicleArmedTransport ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleArmedTransport");
             }
             else
             {
-                targetDuty = VRF_DutyDefOf.VRF_VehicleTransport ?? DefDatabase<DutyDef>.GetNamed("VRF_VehicleTransport", false);
+                targetDuty = VRF_DutyDefOf.VRF_VehicleTransport ?? DefDatabase<DutyDef>.GetNamedSilentFail("VRF_VehicleTransport");
             }
 
             if (targetDuty != null && vehicle.mindState.duty?.def != targetDuty)
@@ -287,15 +328,20 @@ namespace VehicleRaidFramework
             bool isUnarmedTransport = VRF_TransportUtil.IsTransportVehicle(vehicle);
 
             bool hasPawnsToDisembark = false;
-            foreach (var handler in vehicle.handlers)
+            for (int i = 0; i < vehicle.handlers.Count; i++)
             {
+                var handler = vehicle.handlers[i];
                 if (handler?.role == null) continue;
                 bool isPassengerSlot = (handler.role.HandlingTypes & HandlingType.Movement) == 0 &&
                                        (handler.role.HandlingTypes & HandlingType.Turret) == 0;
                 if (!isPassengerSlot && !isUnarmedTransport) continue;
-                foreach (Pawn p in handler.thingOwner)
+                for (int j = 0; j < handler.thingOwner.Count; j++)
                 {
-                    if (p != null && !p.Dead && !p.Downed) { hasPawnsToDisembark = true; break; }
+                    if (handler.thingOwner[j] is Pawn p && !p.Dead && !p.Downed)
+                    {
+                        hasPawnsToDisembark = true;
+                        break;
+                    }
                 }
                 if (hasPawnsToDisembark) break;
             }
@@ -304,44 +350,58 @@ namespace VehicleRaidFramework
 
             Lord lord = vehicle.GetLord();
             bool isExiting = lord?.CurLordToil is LordToil_VehicleExitMap;
-
             if (isExiting) return;
 
-            List<Pawn> toDisembark = new List<Pawn>();
-            foreach (var handler in vehicle.handlers)
+            tmpToDisembark.Clear();
+            for (int i = 0; i < vehicle.handlers.Count; i++)
             {
+                var handler = vehicle.handlers[i];
                 if (handler?.role == null) continue;
                 bool isPassengerSlot = (handler.role.HandlingTypes & HandlingType.Movement) == 0 &&
                                        (handler.role.HandlingTypes & HandlingType.Turret) == 0;
                 if (!isPassengerSlot && !isUnarmedTransport) continue;
-                foreach (Pawn p in handler.thingOwner)
+                for (int j = 0; j < handler.thingOwner.Count; j++)
                 {
-                    if (p == null || p.Dead || p.Downed) continue;
+                    if (!(handler.thingOwner[j] is Pawn p) || p.Dead || p.Downed) continue;
                     DutyDef pDuty = p.mindState?.duty?.def;
                     if (pDuty != null && (pDuty == VRF_DutyDefOf.VRF_InfantryExit ||
                         pDuty.defName == "VRF_InfantryExit")) continue;
-                    toDisembark.Add(p);
+                    tmpToDisembark.Add(p);
                 }
             }
 
-            if (toDisembark.Count == 0) return;
+            if (tmpToDisembark.Count == 0) return;
 
             Map map = vehicle.Map;
             CellRect vehicleRect = vehicle.OccupiedRect();
             Thing nearestEnemy = FindNearestEnemy(vehicle);
 
-            foreach (Pawn pawn in toDisembark)
+            for (int i = 0; i < tmpToDisembark.Count; i++)
             {
+                Pawn pawn = tmpToDisembark[i];
                 IntVec3 exitCell = IntVec3.Invalid;
-                for (int radius = 1; radius <= 5 && !exitCell.IsValid; radius++)
+
+                // Step 1: Look at adjacent cells directly around vehicle boundary
+                foreach (IntVec3 adj in vehicleRect.AdjacentCells)
                 {
-                    foreach (IntVec3 cell in GenRadial.RadialCellsAround(vehicle.Position, radius, false))
+                    if (adj.InBounds(map) && adj.Standable(map) && !vehicleRect.Contains(adj))
                     {
-                        if (!cell.InBounds(map)) continue;
-                        if (!cell.Standable(map)) continue;
-                        if (vehicleRect.Contains(cell)) continue;
-                        exitCell = cell;
+                        exitCell = adj;
                         break;
+                    }
+                }
+
+                // Step 2: Fallback expanding 1-3 cells
+                if (!exitCell.IsValid)
+                {
+                    for (int radius = 1; radius <= 3 && !exitCell.IsValid; radius++)
+                    {
+                        foreach (IntVec3 cell in GenRadial.RadialCellsAround(vehicle.Position, radius, false))
+                        {
+                            if (!cell.InBounds(map) || !cell.Standable(map) || vehicleRect.Contains(cell)) continue;
+                            exitCell = cell;
+                            break;
+                        }
                     }
                 }
 
@@ -356,9 +416,9 @@ namespace VehicleRaidFramework
 
                 DutyDef dutyDef =
                     VRF_DutyDefOf.VRF_InfantryAssault_Transport ??
-                    DefDatabase<DutyDef>.GetNamed("VRF_InfantryAssault_Transport", false) ??
+                    DefDatabase<DutyDef>.GetNamedSilentFail("VRF_InfantryAssault_Transport") ??
                     VRF_DutyDefOf.VRF_InfantryAssault ??
-                    DefDatabase<DutyDef>.GetNamed("VRF_InfantryAssault", false);
+                    DefDatabase<DutyDef>.GetNamedSilentFail("VRF_InfantryAssault");
 
                 pawn.mindState.duty = nearestEnemy != null
                     ? new PawnDuty(dutyDef, nearestEnemy.Position)
@@ -366,6 +426,7 @@ namespace VehicleRaidFramework
 
                 pawn.jobs?.StopAll();
             }
+            tmpToDisembark.Clear();
         }
 
         private static Thing FindNearestEnemy(VehiclePawn vehicle)
@@ -373,15 +434,15 @@ namespace VehicleRaidFramework
             var targets = vehicle.Map.attackTargetsCache.TargetsHostileToFaction(vehicle.Faction);
             if (targets == null || targets.Count == 0) return null;
             Thing best = null;
-            float bestDist = float.MaxValue;
-            foreach (var t in targets)
+            float bestDistSq = float.MaxValue;
+            for (int i = 0; i < targets.Count; i++)
             {
-                Thing thing = t.Thing;
-                if (thing == null || thing.Destroyed) continue;
-                if (thing.Map == null || thing.Map.fogGrid.IsFogged(thing.Position)) continue;
+                Thing thing = targets[i].Thing;
+                if (thing == null || thing.Destroyed || thing.Map == null) continue;
+                if (thing.Map.fogGrid.IsFogged(thing.Position)) continue;
                 if (thing is Pawn p && (p.Dead || p.Downed)) continue;
                 float d = thing.Position.DistanceToSquared(vehicle.Position);
-                if (d < bestDist) { bestDist = d; best = thing; }
+                if (d < bestDistSq) { bestDistSq = d; best = thing; }
             }
             return best;
         }
@@ -390,14 +451,24 @@ namespace VehicleRaidFramework
         {
             if (vehicle.inventory == null || vehicle.inventory.innerContainer == null || vehicle.inventory.innerContainer.Count == 0) return;
 
-            Thing food = vehicle.inventory.innerContainer.FirstOrDefault(t => t.def.IsIngestible);
+            Thing food = null;
+            for (int i = 0; i < vehicle.inventory.innerContainer.Count; i++)
+            {
+                Thing t = vehicle.inventory.innerContainer[i];
+                if (t.def.IsIngestible)
+                {
+                    food = t;
+                    break;
+                }
+            }
             if (food == null) return;
 
-            foreach (var handler in vehicle.handlers)
+            for (int h = 0; h < vehicle.handlers.Count; h++)
             {
-                foreach (Pawn occupant in handler.thingOwner)
+                var handler = vehicle.handlers[h];
+                for (int o = 0; o < handler.thingOwner.Count; o++)
                 {
-                    if (occupant != null && occupant.needs?.food != null)
+                    if (handler.thingOwner[o] is Pawn occupant && occupant.needs?.food != null)
                     {
                         if (occupant.needs.food.CurLevelPercentage < 0.4f)
                         {
@@ -407,7 +478,16 @@ namespace VehicleRaidFramework
                             if (food.stackCount <= 0)
                             {
                                 food.Destroy();
-                                food = vehicle.inventory.innerContainer.FirstOrDefault(t => t.def.IsIngestible);
+                                food = null;
+                                for (int i = 0; i < vehicle.inventory.innerContainer.Count; i++)
+                                {
+                                    Thing t = vehicle.inventory.innerContainer[i];
+                                    if (t.def.IsIngestible)
+                                    {
+                                        food = t;
+                                        break;
+                                    }
+                                }
                                 if (food == null) return;
                             }
                         }
@@ -425,8 +505,14 @@ namespace VehicleRaidFramework
             if (needed <= 0) return;
 
             int availableFuel = 0;
-            var fuelThings = CompFueledTravel.AllFuelFromInventory(vehicle).ToList();
-            foreach (var t in fuelThings) availableFuel += t.stackCount;
+            var fuelThings = CompFueledTravel.AllFuelFromInventory(vehicle);
+            if (fuelThings != null)
+            {
+                foreach (var t in fuelThings)
+                {
+                    availableFuel += t.stackCount;
+                }
+            }
 
             if (availableFuel > 0)
             {
@@ -457,12 +543,22 @@ namespace VehicleRaidFramework
                 List<Thing> thingList = cell.GetThingList(map);
                 for (int i = thingList.Count - 1; i >= 0; i--)
                 {
-                    if (thingList[i] is Pawn p && p != vehicle && !(p is VehiclePawn) && !vehicle.handlers.Any(h => h.thingOwner.Contains(p)))
+                    if (thingList[i] is Pawn p && p != vehicle && !(p is VehiclePawn) && !IsPawnAboard(vehicle, p))
                     {
                         ResolvePawnOverlap(vehicle, p);
                     }
                 }
             }
+        }
+
+        private static bool IsPawnAboard(VehiclePawn vehicle, Pawn p)
+        {
+            if (vehicle.handlers == null) return false;
+            for (int i = 0; i < vehicle.handlers.Count; i++)
+            {
+                if (vehicle.handlers[i].thingOwner.Contains(p)) return true;
+            }
+            return false;
         }
 
         private static void ResolvePawnOverlap(VehiclePawn vehicle, Pawn pawn)
@@ -471,19 +567,19 @@ namespace VehicleRaidFramework
 
             Map map = vehicle.Map;
             IntVec3 bestPos = IntVec3.Invalid;
-            float minDist = float.MaxValue;
+            float minDistSq = float.MaxValue;
             CellRect vehicleRect = vehicle.OccupiedRect();
 
             for (int radius = 1; radius <= 3; radius++)
             {
-                foreach (IntVec3 cell in GenRadial.RadialCellsAround(pawn.Position, radius, true))
+                foreach (IntVec3 cell in GenRadial.RadialCellsAround(pawn.Position, radius, false))
                 {
                     if (cell.InBounds(map) && cell.Walkable(map) && !vehicleRect.Contains(cell))
                     {
                         float d = cell.DistanceToSquared(pawn.Position);
-                        if (d < minDist)
+                        if (d < minDistSq)
                         {
-                            minDist = d;
+                            minDistSq = d;
                             bestPos = cell;
                         }
                     }
@@ -534,6 +630,8 @@ namespace VehicleRaidFramework
     [HarmonyPatch(typeof(VehicleActions), nameof(VehicleActions.DisembarkAll))]
     public static class Patch_DisembarkAll_ProtectHoverDriver
     {
+        private static readonly List<Pawn> tmpDriverDisembark = new List<Pawn>();
+
         [HarmonyPrefix]
         public static bool Prefix(VehiclePawn vehicle)
         {
@@ -552,28 +650,31 @@ namespace VehicleRaidFramework
             if (turrets != null && turrets.Turrets != null && turrets.Turrets.Count > 0) return true;
 
             Pawn driver = null;
-            foreach (var handler in vehicle.handlers)
+            for (int i = 0; i < vehicle.handlers.Count; i++)
             {
+                var handler = vehicle.handlers[i];
                 if (handler?.role == null) continue;
                 if ((handler.role.HandlingTypes & HandlingType.Movement) == 0) continue;
-                foreach (var thing in handler.thingOwner)
+                for (int j = 0; j < handler.thingOwner.Count; j++)
                 {
-                    if (thing is Pawn p && !p.Dead && !p.Downed) { driver = p; break; }
+                    if (handler.thingOwner[j] is Pawn p && !p.Dead && !p.Downed) { driver = p; break; }
                 }
                 if (driver != null) break;
             }
 
             if (driver == null) return true;
 
-            List<Pawn> toDisembark = new List<Pawn>();
-            foreach (Pawn p in vehicle.AllPawnsAboard)
+            tmpDriverDisembark.Clear();
+            var allPawns = vehicle.AllPawnsAboard;
+            foreach (Pawn p in allPawns)
             {
-                if (p != driver) toDisembark.Add(p);
+                if (p != driver) tmpDriverDisembark.Add(p);
             }
 
-            foreach (Pawn p in toDisembark)
-                vehicle.DisembarkPawn(p);
+            for (int i = 0; i < tmpDriverDisembark.Count; i++)
+                vehicle.DisembarkPawn(tmpDriverDisembark[i]);
 
+            tmpDriverDisembark.Clear();
             return false;
         }
     }
